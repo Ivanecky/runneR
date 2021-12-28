@@ -1,0 +1,673 @@
+---
+title: "Ad-hoc Indoor Analysis"
+author: "Samuel Ivanecky"
+date: "12/4/2021"
+output: html_document
+---
+
+# Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width=14, fig.height=9) 
+
+# Code to generate line item performances from TFRRS.
+library(tidymodels)
+library(httr)
+library(jsonlite)
+library(RPostgreSQL)
+library(DBI)
+library(RSQLite)
+library(reshape2)
+library(stringr)
+library(yaml)
+library(rvest)
+library(kit)
+library(fuzzyjoin)
+library(ggthemes)
+library(ggridges)
+library(ggrepel)
+library(zoo)
+library(dplyr)
+library(teamcolors)
+
+# Connect to AWS
+# Read connection data from yaml
+aws.yml <- read_yaml("/Users/samivanecky/git/TrackPowerRankings/aws.yaml")
+
+# Source file for functions
+source("/Users/samivanecky/git/runneR//scrapeR/Scraping_Fxns.R")
+source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
+
+# Connect to database
+aws <- dbConnect(
+  RPostgres::Postgres(),
+  host = aws.yml$host,
+  user = aws.yml$user,
+  password = aws.yml$password,
+  port = aws.yml$port
+)
+
+reformatTimes <- function(mark) {
+  sec <- str_pad((mark %% 60), width = 2, side = "left", pad = "0")
+  min <- floor(mark / 60)
+  time <- paste0(min, ":", sec)
+  return(time)
+}
+```
+
+# Data Setup
+## Query Base Data
+```{r}
+# Query data tables from AWS
+lines <- dbGetQuery(aws, "select * from race_results")
+
+grpLines <- dbGetQuery(aws, "select * from results_grouped_yr")
+
+grpAllTime <- dbGetQuery(aws, "select * from results_grouped")
+```
+
+## Aggregate Base Data
+```{r}
+# Create calendar data
+cal <- genCal()
+
+lines <- lines %>%
+  group_by(NAME, GENDER, TEAM, DIVISION, EVENT) %>%
+  arrange(MEET_DATE, .by_group = TRUE) %>%
+  mutate(
+    TIME_SHIFT = lag(TIME) - TIME,
+    PLACE_SHIFT = lag(PLACE) - PLACE,
+    DAYS_BTWN = MEET_DATE - lag(MEET_DATE),
+    C.PR = cummin(TIME), # Cumulative PR
+    R.TIME = zoo::rollmean(TIME, k = 2, fill = NA, align = "right"), # Rolling time (past 2 marks)
+    R.PLACE = zoo::rollmean(PLACE, k = 2, fill = NA, align = "right") # Rolling place (past 2 marks)
+  ) %>%
+  mutate(
+    R.PLACE_SHIFT = zoo::rollmean(PLACE_SHIFT, k = 2, fill = NA, align = "right"),
+    R.TIME_SHIFT = zoo::rollmean(TIME_SHIFT, k = 2, fill = NA, align = "right"),
+    EVENT_TYPE = case_when(
+      grepl("XC", EVENT, ignore.case = TRUE) | (lubridate::month(MEET_DATE) > 6 & lubridate::month(MEET_DATE) < 12) ~ "XC",
+      (lubridate::month(MEET_DATE) >= 1 & lubridate::month(MEET_DATE) <= 2) | (lubridate::month(MEET_DATE) == 3 & lubridate::day(MEET_DATE) < 20) |
+        lubridate::month(MEET_DATE) == 12 ~ "INDOOR",
+      (lubridate::month(MEET_DATE) >= 4 & lubridate::month(MEET_DATE) <= 6) | (lubridate::month(MEET_DATE) == 3 & lubridate::day(MEET_DATE) >= 20) ~ "OUTDOOR",
+      T ~ "OTHER"
+    )
+  ) %>%
+  select(-c(RUNNER_KEY, load_d))
+
+# Create variable for flagging PR, post pr time change, and a clean time for display
+# Additionally, adjusting year for grouping data for YOY purposes
+lines <- lines %>%
+  mutate(
+    is_pr = case_when(
+      C.PR == TIME ~ 1,
+      T ~ 0
+    )
+  ) %>%
+  mutate(
+    post_pr_shift = case_when(
+      is_pr == 1 ~ lead(TIME_SHIFT),
+      T ~ -999
+    )
+  ) %>%
+  rowwise() %>%
+  mutate(
+    clean_time = reformatTimes(TIME),
+    competition_year = case_when(
+      lubridate::month(MEET_DATE) == 12 & EVENT_TYPE == "INDOOR" ~ lubridate::year(MEET_DATE) + 1,
+      T ~ lubridate::year(MEET_DATE)
+    )
+  ) %>%
+  filter(!is.na(MEET_NAME) & MEET_NAME != "")
+
+# Filter out bad data
+lines <- lines %>%
+  filter(
+    (GENDER == "F" & !((EVENT == "800m" & (TIME <= 115 | TIME >= 260)) | (EVENT == "Mile" & (TIME <= 240 | TIME >= 540)) |
+                          (EVENT == "1500m" & (TIME <= 230 | TIME >= 530)) | (EVENT == "3000m" & (TIME <= 490 | TIME >= 900)) |
+                          (EVENT == "5000m" & (TIME <= 900 | TIME >= 1500)))) |
+    (GENDER == "M" & !((EVENT == "800m" & (TIME <= 100 | TIME >= 240)) | (EVENT == "Mile" & (TIME <= 200 | TIME >= 500)) |
+                    (EVENT == "1500m" & (TIME <= 190 | TIME >= 490)) | (EVENT == "3000m" & (TIME <= 400 | TIME >= 900)) |
+                    (EVENT == "5000m" & (TIME <= 660 | TIME >= 1500))))
+  )
+
+# Clean up grouped times
+# runnerGrpYrly <- runnerGrpYrly %>%
+#   rowwise() %>%
+#   mutate(
+#     clean_avg_time = reformatTimes(floor(AVG_TIME)),
+#     clean_pr = reformatTimes(floor(PR))
+#   )
+
+# runnerGrp <- runnerGrp %>%
+#   rowwise() %>%
+#   mutate(
+#     clean_avg_time = reformatTimes(floor(AVG_TIME)),
+#     clean_pr = reformatTimes(floor(PR))
+#   )
+
+# Join calendar data to lines data
+rl <- lines %>%
+  left_join(cal, by = c("MEET_DATE" = "cal_d"))
+```
+
+## Recreate Grouped Yearly Data Using Competition Year
+```{r}
+grpYrly <- lines %>%
+  ungroup() %>%
+  group_by(NAME, TEAM, GENDER, DIVISION, EVENT, EVENT_TYPE, competition_year) %>%
+  summarise(
+    pr = min(TIME, na.rm = T),
+    prs_run = sum(is_pr, na.rm = T),
+    avg_time = round(mean(TIME, na.rm = T), 2),
+    times_run = n_distinct(MEET_NAME),
+    avg_place = round(mean(PLACE, na.rm = T), 2),
+    wins = n_distinct(MEET_NAME[PLACE == 1])
+  ) %>%
+  rowwise() %>%
+  mutate(
+    clean_pr = reformatTimes(floor(pr)),
+    clean_avg_time = reformatTimes(floor(avg_time)),
+    win_pct = round((wins / times_run) * 100, 3)
+  )
+```
+
+## Race Grouped Data
+```{r}
+# Line item level
+raceGrp <- lines %>%
+  group_by(MEET_NAME, MEET_DATE, competition_year, GENDER, EVENT, PRELIM) %>%
+  arrange(
+    TIME, .by_group = TRUE
+  ) %>%
+  mutate(
+    meet_evnt_rank = 1:n(),
+    time_behind_winner = TIME - min(TIME, na.rm = T),
+    place_behind_winner = PLACE - min(PLACE, na.rm = T)
+  )
+
+# Get best weekly times
+raceBestWeekly <- rl %>%
+  ungroup() %>%
+  group_by(EVENT, GENDER, week_key) %>%
+  summarise(
+    best_time = min(TIME, na.rm = T),
+    avg_winning_time = mean(TIME[PLACE == 1], na.rm = T)
+  )
+
+# Create data for race strength (could get messy with heats...) - SOC = Strength of Competition
+raceSOC <- raceGrp %>%
+  ungroup() %>%
+  filter(PRELIM == FALSE) %>% 
+  group_by(
+    MEET_NAME, MEET_DATE, competition_year, GENDER, EVENT
+  ) %>%
+  summarise(
+    # avg_top_time = mean(TIME[PLACE <= 5], na.rm = T),
+    n_runners = n_distinct(NAME),
+    winning_time = min(TIME, na.rm = T)
+  )
+
+raceSOCTopTime <- raceGrp %>%
+  ungroup() %>%
+  filter(PRELIM == FALSE) %>% 
+  group_by(
+    MEET_NAME, MEET_DATE, competition_year, GENDER, EVENT
+  ) %>%
+  slice_min(n = 5, order_by = TIME) %>%
+  summarise(
+    avg_top_time = mean(TIME, na.rm = T)
+  )
+
+# Join SOC data
+soc <- raceSOC %>%
+  inner_join(raceSOCTopTime, by = c("MEET_NAME", "MEET_DATE", "competition_year", "GENDER", "EVENT")) %>%
+  left_join(cal, by = c("MEET_DATE" = "cal_d")) %>%
+  left_join(raceBestWeekly, by = c("week_key", "EVENT", "GENDER"))
+
+# Create SOC value
+soc <- soc %>%
+  mutate(
+    soc = round(((0.3 * (best_time / winning_time)) + ((avg_winning_time / avg_top_time) * 0.5) + ((avg_winning_time / winning_time) * 0.2)), 3)
+  ) %>%
+  filter(!grepl("XC", EVENT) & competition_year >= 2020 & soc <= 3)
+
+# Join SOC data to line level
+socJoin <- soc %>%
+  ungroup() %>%
+  select(MEET_NAME, MEET_DATE, GENDER, EVENT, competition_year, soc)
+
+raceGrp <- raceGrp %>%
+  left_join(socJoin, by = c("MEET_DATE", "MEET_NAME", "GENDER", "competition_year", "EVENT")) %>% 
+  filter(!is.na(soc))
+
+# Runner season level
+raceGrpYrly <- raceGrp %>%
+  ungroup() %>%
+  filter(PRELIM == FALSE) %>%
+  group_by(
+    NAME, GENDER, TEAM, EVENT_TYPE, EVENT, competition_year
+  ) %>%
+  summarise(
+    pr = min(TIME, na.rm = T),
+    prs_run = sum(is_pr, na.rm = T),
+    avg_time = round(mean(TIME, na.rm = T), 2),
+    times_run = n_distinct(MEET_NAME),
+    avg_place = round(mean(PLACE, na.rm = T), 2),
+    wins = n_distinct(MEET_NAME[PLACE == 1]),
+    avg_meet_event_rank = round(mean(meet_evnt_rank, na.rm = T), 3),
+    avg_time_behind = round(mean(time_behind_winner, na.rm = T), 3),
+    avg_place_behind = round(mean(place_behind_winner, na.rm = T), 3)
+  ) %>%
+  rowwise() %>%
+  mutate(
+    clean_pr = reformatTimes(floor(pr)),
+    clean_avg_time = reformatTimes(floor(avg_time)),
+    win_pct = round((wins / times_run) * 100, 3)
+  )
+```
+
+## Create Weekly Performance Ranges
+```{r}
+wklyPerf <- rl %>%
+  group_by(EVENT, week_key, GENDER, DIVISION) %>%
+  arrange(TIME, .by_group = TRUE) %>%
+  mutate(
+    WEEKLY_RANK = 1:n()
+  ) %>%
+  mutate(
+    WEEKLY_RANK_PCT = round((max(WEEKLY_RANK) - WEEKLY_RANK) / max(WEEKLY_RANK), 3),
+    WEEKLY_RNRS = max(WEEKLY_RANK, na.rm = T)
+  ) %>%
+  select(
+    NAME, GENDER, TEAM, EVENT, DIVISION, week_key, WEEKLY_RANK, WEEKLY_RANK_PCT, WEEKLY_RNRS
+  ) %>%
+  group_by(NAME, GENDER, TEAM, EVENT, DIVISION, week_key) %>%
+  summarise(
+    WEEKLY_RANK = min(WEEKLY_RANK, na.rm = T),
+    WEEKLY_RANK_PCT = max(WEEKLY_RANK_PCT, na.rm = T),
+    WEEKLY_RNRS = max(WEEKLY_RNRS, na.rm = T)
+  ) %>%
+  funique()
+```
+
+## Join RL w/ Weekly Ranks
+```{r}
+rl <- rl %>%
+  left_join(wklyPerf, by = c("NAME", "GENDER", "TEAM", "DIVISION", "EVENT", "week_key")) %>%
+  funique()
+```
+
+## Pivot Out Personal Best Data
+```{r}
+prDf <- grpAllTime %>%
+  pivot_wider(
+    id_cols = c(NAME, GENDER, TEAM),
+    names_from = EVENT,
+    values_from = c(AVG_TIME, PR, TIMES.RUN)
+  ) %>%
+  right_join(names, by = c("NAME", "TEAM", "GENDER"))
+```
+
+# Join Divisions to All Time Grouping
+```{r}
+divNames <- lines %>%
+  ungroup() %>%
+  select(NAME, GENDER, TEAM, DIVISION) %>%
+  funique()
+
+# Join
+grpAllTime <- grpAllTime %>%
+  left_join(divNames, by = c("NAME", "GENDER", "TEAM")) %>%
+  funique()
+```
+
+# Model Attempt
+## Subset D1 Women
+```{r}
+# All-time
+wDf <- prDf %>%
+  filter(GENDER == "F" & DIVISION == "D1") %>%
+  select(
+    NAME, DIVISION, AVG_TIME_3000m, AVG_TIME_5000m, AVG_TIME_1500m, AVG_TIME_Mile,
+    PR_800m, PR_1500m, PR_Mile, PR_3000m, PR_5000m
+  )
+```
+
+# Visuals
+## 3k Improvement
+```{r}
+wDf %>%
+  filter(PR_3000m <= 600) %>%
+  ggplot(aes(PR_3000m, PR_5000m, colour = DIVISION)) +
+  geom_point() +
+  geom_smooth(method='lm', formula= y~x) +
+  scale_x_continuous(name = "Personal Best",
+                     breaks = c(530, 540, 550, 560, 570, 580, 590, 600),
+                     labels = c("8:50", "9:00", "9:10", "9:20", "9:30", "9:40", "9:50", "10:00")) +
+  scale_y_continuous(name = "Personal Best",
+                     breaks = c(900, 945, 990, 1035, 1080, 1125, 1170),
+                     labels = c("15:00", "15:45", "16:30", "17:15", "18:00", "18:45", "19:30")) +
+  geom_label_repel(aes(label = NAME), max.overlaps = 10) +
+  ggplot2::labs(
+    x = "PR 3k",
+    y = "PR 5k",
+    caption = "",
+    title = "D1 Women 3k vs 5k PRs",
+    subtitle = ""
+  ) +
+  ggplot2::theme_minimal() +
+  ggplot2::theme(
+    plot.title = ggplot2::element_text(face = "bold"),
+    plot.title.position = "panel",
+    text = element_text(size=20),
+    #axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+    legend.position = "none"
+  )
+```
+
+## 800 v Mile
+```{r}
+wDf %>%
+  filter(PR_Mile <= 300 & PR_800m <= 160) %>%
+  ggplot(aes(PR_800m, PR_Mile)) +
+  geom_point() +
+  geom_smooth(method='lm', formula= y~x) +
+  scale_x_continuous(name = "Personal Best",
+                     breaks = c(115, 120, 125, 130, 135, 140, 145, 150, 155, 160),
+                     labels = c("1:55", "2:00", "2:05", "2:10", "2:15", "2:20", "2:25", "2:30", "2:35", "2:40")) +
+  scale_y_continuous(name = "Personal Best",
+                     breaks = c(255, 265, 275, 285, 295, 305),
+                     labels = c("4:15", "4:25", "4:35", "4:45", "4:55", "5:05")) +
+  geom_label_repel(aes(label = NAME), max.overlaps = 10, colour = "blue") +
+  ggplot2::labs(
+    x = "PR 800",
+    y = "PR Mile",
+    caption = "",
+    title = "D1 Women 800 vs Mile PRs",
+    subtitle = "Minimum 5:00 mile."
+  ) +
+  ggplot2::theme_minimal() +
+  ggplot2::theme(
+    plot.title = ggplot2::element_text(face = "bold"),
+    plot.title.position = "panel",
+    text = element_text(size=20),
+    #axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+    legend.position = "none"
+  )
+```
+
+
+## 5k Improvement
+```{r}
+grpLines %>%
+  filter(GENDER == "F" & DIVISION == "D1") %>%
+  filter(YEAR == 2021 & EVENT == "5000m" & PR <= 990) %>%
+  filter(!is.na(PR_PROG)) %>%
+  ggplot(aes(PR, PR_PROG)) +
+  geom_point() +
+  scale_x_continuous(name = "Personal Best", 
+                     breaks = c(900, 925, 950, 975), 
+                     labels = c("15:00", "15:25", "15:50", "16:15")) +
+  geom_label_repel(aes(label = NAME), max.overlaps = 200, colour = "blue") +
+  theme_minimal() +
+  theme(legend.position = "none", text = element_text(size=20)) +
+  ggtitle("D1 Women 5k Progession in 2021", subtitle = "PR improvement in 5k vs previous years. Only showing for PRs < 16:31.") +
+  labs(y = "PR Improvement (Sec)")
+```
+
+## PR 3k vs 5k
+```{r}
+prDf %>%
+  filter(DIVISION == "D1" & GENDER == "F" & PR_3000m <= 570) %>%
+  ggplot(aes(PR_3000m, PR_5000m)) +
+  geom_point() +
+  stat_smooth() +
+  geom_label_repel(aes(label = NAME), max.overlaps = 100)
+```
+
+# 6k XC Wins
+```{r}
+grpLines %>%
+  filter(GENDER == "F" & EVENT == "6K XC" & YEAR == 2021 & AVG_TIME >= 1000) %>%
+  slice_max(n = 50, order_by = PR) %>%
+  ggplot(aes(AVG_TIME, AVG_PLACE, colour = DIVISION)) +
+  geom_point() +
+  geom_label_repel(aes(label = NAME), max.overlaps = 20)
+  ggplot2::labs(
+    x = "",
+    y = "",
+    caption = "",
+    title = "Top 50 NCAA Women Based on 6k XC Win %",
+    subtitle = "Data shown for top 50 women with most wins."
+  ) +
+  ggplot2::theme_bw() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    # legend.position = "none",
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 20, hjust = 0.5, vjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    text = element_text(size=10, face = "bold")
+  )
+  # scale_x_continuous(name = "Win Percentage",
+  #                    breaks = c(0.0, 20.0, 40.0, 60.0, 80.0, 100.0),
+  #                    labels = c("0%", "20%", "40%", "60%", "80%", "100%"))
+```
+
+# Post PR Analysis
+## Subset Data
+```{r}
+prs <- lines %>%
+  filter(post_pr_shift != -999 & EVENT_TYPE == "INDOOR" & PRELIM == FALSE) %>%
+  filter(EVENT %in% c("800m", "Mile", "3000m", "5000m")) %>%
+  filter(
+    !(EVENT == "800m" & abs(post_pr_shift) >= 70) &
+    !(EVENT == "Mile" & abs(post_pr_shift) >= 120) &
+    !(EVENT == "3000m" & abs(post_pr_shift) >= 200) &
+    !(EVENT == "5000m" & abs(post_pr_shift) >= 300)
+  )
+```
+
+## Plot Post-PR Performance
+```{r}
+prs %>%
+  filter(DIVISION %in% c("D1")) %>%
+  ggplot(aes(post_pr_shift, fill = GENDER)) +
+  geom_density(alpha = 0.5) +
+  # geom_label_repel(aes(label = NAME), max.overlaps = 20)
+  ggplot2::labs(
+    x = "Time Shift Post-PR (seconds)",
+    y = "Proportion of Performances",
+    caption = "Only using Division 1 runners.",
+    title = "Distribution of Post-PR Performances Relative to PR",
+    subtitle = "Time shift is the amount (in seconds) a runner was better/worse in an event the next time they competed after setting a PR. 
+    Ex: A 4:02 miler running 3:59 would be +3"
+  ) +
+  ggplot2::theme_bw() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    # legend.position = "none",
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 20, hjust = 0.5, vjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    text = element_text(size=10, face = "bold")
+  ) +
+  facet_wrap(EVENT ~ ., scales = "free")
+```
+
+## Plot For Big Jumps in Performance
+```{r}
+prs %>%
+  filter(!is.na(TIME_SHIFT)) %>%
+  filter(DIVISION %in% c("D1")) %>%
+  filter(
+    (TIME_SHIFT >= 2 & EVENT == "800m") |
+    (TIME_SHIFT >= 5 & EVENT == "Mile") |
+    (TIME_SHIFT >= 10 & EVENT == "3000m") |
+    (TIME_SHIFT >= 20 & EVENT == "5000m")
+  ) %>%
+  ggplot(aes(post_pr_shift, fill = GENDER)) +
+  geom_density(alpha = 0.5) +
+  # geom_label_repel(aes(label = NAME), max.overlaps = 20)
+  ggplot2::labs(
+    x = "Time Shift Post-PR (seconds)",
+    y = "Proportion of Performances",
+    caption = "Only using Division 1 runners.",
+    title = "Distribution of Post-PR Performances Relative to PR for Big Improvements",
+    subtitle = "Time shift is the amount (in seconds) a runner was better/worse in an event the next time they competed after setting a PR. Ex: A 4:02 miler running 3:59 would be +3
+    Big improvements defined as 2+ sec in 800, 5+ in mile, 10+ in 3k, and 20+ in 5k."
+  ) +
+  ggplot2::theme_bw() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    # legend.position = "none",
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 20, hjust = 0.5, vjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    text = element_text(size=10, face = "bold")
+  ) +
+  facet_wrap(EVENT ~ ., scales = "free")
+```
+
+# 2021 Improvements
+```{r}
+lines %>%
+  ungroup() %>%
+  filter(!is.na(TIME_SHIFT) & GENDER == "F" & EVENT == "5000m") %>%
+  filter(YEAR == 2021 & EVENT_TYPE == "INDOOR" & is_pr == 1) %>%
+  filter(MEET_DATE >= "2021-12-01") %>%
+    filter(
+    !(EVENT == "800m" & abs(TIME_SHIFT) >= 70) &
+    !(EVENT == "Mile" & abs(TIME_SHIFT) >= 120) &
+    !(EVENT == "3000m" & abs(TIME_SHIFT) >= 200) &
+    !(EVENT == "5000m" & abs(TIME_SHIFT) >= 300)
+  ) %>%
+  filter(TIME <= 1000) %>%
+  #filter(DIVISION %in% c("D1", "D2", "D3")) %>%
+  dplyr::slice_max(n = 25, order_by = TIME_SHIFT) %>%
+  ggplot(aes(reorder(NAME, TIME_SHIFT), TIME_SHIFT, fill = DIVISION)) +
+  geom_bar(stat = "identity") +
+  geom_label(aes(label = clean_time), fill = "white") +
+  ggplot2::labs(
+    x = "",
+    y = "Improvement on Previous Personal Best (Seconds)",
+    caption = "Some transfers may be omitted due to data issues.",
+    title = "Top 25 Improvements for 21-22 Indoor Season vs Personal Best - Men's 5k",
+    subtitle = "Runners without a mark are not included. Label shows runners new personal best mark."
+  ) +
+  ggplot2::theme_bw() +
+  scale_fill_stata() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 20, hjust = 0.5, vjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    text = element_text(size=12, face = "bold")
+  ) + 
+  coord_flip()
+```
+
+# Top 2021 Performances
+## Avg Time
+```{r}
+runnerGrpYrly %>%
+  ungroup() %>%
+  filter(!is.na(AVG_TIME) & GENDER == "F" & EVENT == "5000m") %>%
+  filter(YEAR == 2021) %>%
+  #filter(DIVISION %in% c("D1", "D2", "D3")) %>%
+  dplyr::slice_min(n = 25, order_by = AVG_TIME) %>%
+  ggplot(aes(reorder(NAME, -AVG_TIME), AVG_TIME, fill = DIVISION)) +
+  geom_bar(stat = "identity") +
+  geom_label(aes(label = clean_avg_time), fill = "white") +
+  ggplot2::labs(
+    x = "",
+    y = "Improvement on Previous Personal Best (Seconds)",
+    caption = "Some transfers may be omitted due to data issues.",
+    title = "Top 25 Improvements for 21-22 Indoor Season vs Personal Best - Men's 5k",
+    subtitle = "Runners without a mark are not included. Label shows runners new personal best mark."
+  ) +
+  ggplot2::theme_bw() +
+  scale_fill_stata() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 20, hjust = 0.5, vjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    text = element_text(size=12, face = "bold")
+  ) + 
+  coord_flip()
+```
+
+# Top Runner Progression
+## Get Top Runners
+```{r}
+# Set event and gender
+evnt <- "800m"
+gender <- "F"
+type <- "INDOOR"
+
+topNames <- grpYrly %>%
+  ungroup() %>%
+  filter(competition_year %in% c(2021, 2022)) %>%
+  filter(GENDER == gender & EVENT == evnt & EVENT_TYPE == type) %>%
+  slice_min(n = 15, order_by = pr)
+
+top <- grpYrly %>%
+  filter(competition_year >= 2017) %>%
+  filter(EVENT == evnt & EVENT_TYPE == type & GENDER == gender) %>%
+  filter(NAME %in% topNames$NAME)
+
+top %>%
+  ggplot(aes(competition_year, avg_place, color = NAME, group = NAME)) +
+  geom_point() +
+  geom_line() +
+  geom_label(aes(label = NAME)) +
+  # geom_label(aes(label = clean_avg_time), fill = "white") +
+  ggplot2::labs(
+    x = "",
+    y = "Improvement on Previous Personal Best (Seconds)",
+    caption = "Some transfers may be omitted due to data issues.",
+    title = "Top 25 Improvements for 21-22 Indoor Season vs Personal Best - Men's 5k",
+    subtitle = "Runners without a mark are not included. Label shows runners new personal best mark."
+  ) +
+  ggplot2::theme_bw() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 20, hjust = 0.5, vjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    text = element_text(size=12, face = "bold")
+  )
+```
+
+# SOC Meets
+```{r}
+soc %>%
+  ungroup() %>%
+  funique() %>%
+  filter(GENDER == "M") %>%
+  slice_max(n = 15, order_by = soc) %>%
+  ggplot(aes(reorder(paste0(MEET_NAME, "-", EVENT), soc), soc, fill = as.factor(competition_year))) +
+  geom_bar(stat = "identity") +
+  geom_label(aes(label = soc), fill = "white") +
+  ggplot2::labs(
+    x = "",
+    y = "SOC",
+    caption = "Omitting XC competitions.",
+    title = "Top 15 Men's Races Based on Strength of Compeititon (SOC)",
+    subtitle = "Races shown from 2020-2022 seasons."
+  ) +
+  ggplot2::theme_bw() +
+  scale_fill_stata() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 20, hjust = 0.5, vjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    text = element_text(size=12, face = "bold")
+  ) + 
+  guides(fill=guide_legend(title="Season")) +
+  coord_flip()
+```
+

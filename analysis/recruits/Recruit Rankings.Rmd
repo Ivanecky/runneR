@@ -1,0 +1,268 @@
+---
+title: "Recruits"
+author: "Samuel Ivanecky"
+date: "12/16/2021"
+output: html_document
+---
+
+# Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width=12, fig.height=8) 
+
+library(tidyverse)
+library(dplyr)
+library(ggthemes)
+library(ggrepel)
+
+# Read data
+#df <- read.csv("/Users/samivanecky/git/runneR/analysis/recruits/D1 Women Recruit Rankings 2021-2022 - All.csv")
+df <- read.csv("/Users/samivanecky/Downloads/D2 Women's Recruit Rankings - ALL.csv")
+```
+
+# Clean Up Data
+## Handle Times
+```{r}
+# Function to handle times
+handleTimes <- function(mark) {
+  # Convert mark to character
+  mark <- as.character(mark)
+  # Check if mark has no colon (sprint time)
+  if (!(grepl(":", mark))) {
+    # Handle the parentheses for ties, etc
+    mark <- gsub("\\(.*","", mark)
+    mark <- gsub("@.*","", mark)
+    # Convert to numeric
+    mark <- as.numeric(mark)
+    return(mark)
+  } else {
+    # Split the tenths/hundreths off
+    split_mark = unlist(strsplit(mark, "[.]"))
+    # Split into minutes & seconds
+    min_sec = unlist(strsplit(split_mark[1], ":"))
+    # Calculate seconds from minutes and add seconds
+    total_time = as.numeric(min_sec[1])*60 + as.numeric(min_sec[2])
+    # Return time 
+    return(total_time)
+  }
+}
+```
+
+## Clean Up Times
+```{r}
+df <- df %>%
+  rowwise() %>%
+  mutate(
+    X800 = handleTimes(X800),
+    X1500 = handleTimes(X1500),
+    X1600 = handleTimes(X1600),
+    Mile = handleTimes(Mile),
+    X3000 = handleTimes(X3000),
+    X3200 = handleTimes(X3200),
+    X2.Mile = handleTimes(X2.Mile),
+    X5k = handleTimes(X5k),
+    X5k..XC. = handleTimes(X5k..XC.)
+  )
+
+# Convert times 
+df <- df %>%
+  filter(!is.na(Athlete.Name)) %>%
+  mutate(
+    C_15_16 = X1500 + 19,
+    C_Mile_16 = Mile - 2,
+    C_3k_32 = X3000 + 44,
+    C_2m_32 = X2.Mile - 5
+  ) %>%
+  mutate(
+    Best_1600_Conv = min(c(C_15_16, C_Mile_16, X1600), na.rm = T),
+    Best_3200_Conv = min(c(X3200, C_3k_32, C_2m_32), na.rm = T)
+  ) %>%
+  ungroup()
+```
+
+# Create Rank Orders
+## Break out by each event
+```{r}
+# 800
+r8 <- df %>%
+  filter(!is.na(X800) & is.finite(X800)) %>%
+  arrange(desc(X800)) %>%
+  mutate(
+    Rank_800 = 1:n()
+  ) %>%
+  mutate(
+    Rank_800 = Rank_800 / max(Rank_800, na.rm = T)
+  ) %>%
+  select(Athlete.Name, Team, Rank_800)
+
+# 1600
+r16 <- df %>%
+  filter(!is.na(Best_1600_Conv) & is.finite(Best_1600_Conv)) %>%
+  arrange(desc(Best_1600_Conv)) %>%
+  mutate(
+    Rank_1600 = 1:n()
+  ) %>%
+  mutate(
+    Rank_1600 = Rank_1600 / max(Rank_1600, na.rm = T)
+  ) %>%
+  select(Athlete.Name, Team, Rank_1600)
+
+# 3200
+r32 <- df %>%
+  filter(!is.na(Best_3200_Conv) & is.finite(Best_3200_Conv)) %>%
+  arrange(desc(Best_3200_Conv)) %>%
+  mutate(
+    Rank_3200 = 1:n()
+  ) %>%
+  mutate(
+    Rank_3200 = Rank_3200 / max(Rank_3200, na.rm = T)
+  ) %>%
+  select(Athlete.Name, Team, Rank_3200)
+
+# 5k XC
+r5k <- df %>%
+  filter(!is.na(X5k..XC.) & is.finite(X5k..XC.)) %>%
+  arrange(desc(X5k..XC.)) %>%
+  mutate(
+    Rank_5k_XC = 1:n()
+  ) %>%
+  mutate(
+    Rank_5k_XC = Rank_5k_XC / max(Rank_5k_XC, na.rm = T)
+  ) %>%
+  select(Athlete.Name, Team, Rank_5k_XC)
+```
+
+# Join Data
+```{r}
+rankDf <- r8 %>%
+  full_join(r16, by = c("Athlete.Name", "Team")) %>%
+  full_join(r32, by = c("Athlete.Name", "Team")) %>%
+  full_join(r5k, by = c("Athlete.Name", "Team"))
+
+rankDf <- rankDf %>%
+  rowwise() %>%
+  mutate(
+    Total_Score = sum(c(Rank_800, Rank_1600, Rank_3200, Rank_5k_XC), na.rm = T),
+    Best_Event = max(c(Rank_800, Rank_1600, Rank_3200, Rank_5k_XC), na.rm = T),
+    Second_Best_Event = Rfast::nth(c(Rank_800, Rank_1600, Rank_3200, Rank_5k_XC), 2, descending = T),
+    Avg_Score = mean(c(Rank_800, Rank_1600, Rank_3200, Rank_5k_XC), na.rm = T)
+  ) %>%
+  mutate(
+    Weighted_Avg_Score = mean(c(Best_Event, Second_Best_Event), na.rm = T),
+    Weighted_Total_Score = sum(c(Best_Event, Second_Best_Event), na.rm = T)
+  ) %>%
+  ungroup()
+```
+
+# Create Team Ranks
+```{r}
+teamRank <- rankDf %>%
+  group_by(Team) %>%
+  top_n(5, Weighted_Avg_Score) %>%
+  summarise(
+    N_Runers = n_distinct(Athlete.Name),
+    Total_Score = sum(Total_Score),
+    Avg_Best_Event = mean(Best_Event),
+    Avg_Score = mean(Avg_Score),
+    Avg_Weighted_Score = mean(Weighted_Avg_Score),
+    Total_Weighted_Score = sum(Weighted_Total_Score),
+    Score_800 = sum(Rank_800),
+    Avg_800 = mean(Rank_800),
+    Score_1600 = sum(Rank_1600),
+    Avg_1600 = mean(Rank_1600),
+    Score_3200 = sum(Rank_3200),
+    Avg_3200 = mean(Rank_3200),
+    Score_5kXC = sum(Rank_5k_XC),
+    Avg_5kXC = mean(Rank_5k_XC)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    Weighted_Score = (Total_Score * 0.1) + (Avg_Score * 0.5) + (Avg_Best_Event * 0.4),
+    Weighted_Score_V2 = (Total_Weighted_Score * 0.25) + (Avg_Weighted_Score * 0.75)
+  )
+```
+
+# Write Data to CSV
+```{r}
+write.csv(teamRank, "teamRankD2Women.csv")
+write.csv(rankDf, "runnerRankD2Women.csv")
+```
+
+# Visuals
+## Weighted Team Score
+```{r}
+ggplot(teamRank, aes(reorder(Team, Weighted_Score), Weighted_Score, fill = Team)) +
+  geom_bar(stat = "identity") +
+  ggtitle("Teams by Weighted Score", subtitle = "Using top 5 recruits per school.") +
+  theme_minimal() + 
+  labs(
+    x = "Team",
+    y = "Weighted Score"
+  ) +
+  ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold"),
+      plot.title.position = "plot",
+      text = element_text(size=15),
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+      legend.position = "none"
+    ) +
+  coord_flip()
+```
+
+## Weighted Score V2
+```{r}
+ggplot(teamRank, aes(reorder(Team, Weighted_Score_V2), Weighted_Score_V2, fill = Team)) +
+  geom_bar(stat = "identity") +
+  ggtitle("Teams by Weighted Score (V2)", subtitle = "Weighted score V2: 75% avg. weighted score, 25% best weighted score.") +
+  theme_minimal() + 
+  labs(
+    x = "Team",
+    y = "Weighted Score"
+  ) +
+  theme(
+    legend.position = "none",
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+  ) +
+  coord_flip()
+```
+
+# Weighted vs Weighted V2
+```{r}
+ggplot(teamRank, aes(Weighted_Score, Weighted_Score_V2, color = Team)) +
+  geom_point() +
+  # geom_abline(intercept = 0, slope = 1, linetype = "dashed") +
+  geom_label_repel(aes(label = Team), max.overlaps = 100, size = 5) +
+  ggtitle("Teams Weighted Score vs Weighted Score (V2)") +
+  theme_minimal() + 
+  labs(
+    x = "Weighted Score",
+    y = "Weighted Score V2"
+  ) +
+  ggplot2::theme(
+      plot.title = ggplot2::element_text(face = "bold"),
+      plot.title.position = "plot",
+      text = element_text(size=25),
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+      legend.position = "none"
+    )
+```
+
+## Individuals
+```{r}
+rankDf %>%
+  filter(Weighted_Avg_Score >= 0.6) %>%
+  ggplot(aes(reorder(Athlete.Name, Weighted_Avg_Score), Weighted_Avg_Score, fill = Team)) +
+    geom_bar(stat = "identity") +
+    ggtitle("Teams by Avg. Best Event", subtitle = "The average score of each runner's best event.") +
+    theme_minimal() + 
+    labs(
+      x = "Team",
+      y = "Avg. Best Event Score"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
+    ) +
+    coord_flip()
+```
+
+
