@@ -33,29 +33,48 @@ aws <- dbConnect(
   port = aws.yml$port
 )
 
-# Test URL
-url <- "https://www.tfrrs.org/results_search.html"
+joinLinks <- c("https://www.tfrrs.org/lists/2770/2019_2020_NCAA_Div._I_Indoor_Qualifying_(FINAL)/2020/i",
+               "https://www.tfrrs.org/lists/2771/2019_2020_NCAA_Div._II_Indoor_Qualifying_(FINAL)",
+               "https://www.tfrrs.org/lists/2772/2019_2020_NCAA_Div._III_Indoor_Qualifying_(FINAL)/2020/i",
+               "https://www.tfrrs.org/archived_lists/2568/2019_NCAA_Division_I_Outdoor_Qualifying_(FINAL)/2019/o",
+               "https://www.tfrrs.org/archived_lists/2571/2019_NCAA_Div._II_Outdoor_Qualifying_(FINAL)/2019/o",
+               "https://www.tfrrs.org/archived_lists/2572/2019_NCAA_Div._III_Outdoor_Qualifying_(FINAL)/2019/o",
+               "https://www.tfrrs.org/archived_lists/2324/2018_2019_NCAA_Div._I_Indoor_Qualifying_(FINAL)/2019/i",
+               "https://www.tfrrs.org/archived_lists/2325/2018_2019_NCAA_Div._II_Indoor_Qualifying_(FINAL)/2019/i",
+               "https://www.tfrrs.org/archived_lists/2326/2018_2019_NCAA_Div._III_Indoor_Qualifying_(FINAL)/2019/i",
+               "https://www.tfrrs.org/archived_lists/2279/2018_NCAA_Division_I_Outdoor_Qualifying_(FINAL)/2018/o",
+               "https://www.tfrrs.org/archived_lists/2282/2018_NCAA_Div._II_Outdoor_Qualifying_(FINAL)/2018/o",
+               "https://www.tfrrs.org/archived_lists/2283/2018_NCAA_Div._III_Outdoor_Qualifying_(FINAL)/2018/o",
+               "https://www.tfrrs.org/archived_lists/2124/2017_2018_NCAA_Div._I_Indoor_Qualifying_(FINAL)/2018/i",
+               "https://www.tfrrs.org/archived_lists/2125/2017_2018_NCAA_Div._II_Indoor_Qualifying_(FINAL)/2018/i",
+               "https://www.tfrrs.org/archived_lists/2126/2017_2018_NCAA_Div._III_Indoor_Qualifying_(FINAL)/2018/i",
+               "https://www.tfrrs.org/archived_lists/1912/2017_NCAA_Div._I_Outdoor_Qualifying_(FINAL)/2017/o",
+               "https://www.tfrrs.org/archived_lists/1913/2017_NCAA_Div._II_Outdoor_Qualifying_(FINAL)/2017/o",
+               "https://www.tfrrs.org/archived_lists/1914/2017_NCAA_Div._III_Outdoor_Qualifying_(FINAL)/2017/o",
+               "https://www.tfrrs.org/archived_lists/1797/2016_2017_NCAA_Div._I_Indoor_Qualifying_(FINAL)/2017/i",
+               "https://www.tfrrs.org/archived_lists/1798/2016_2017_NCAA_Div._II_Indoor_Qualifying_(FINAL)/2017/i",
+               "https://www.tfrrs.org/archived_lists/1799/2016_2017_NCAA_Div._III_Indoor_Qualifying_(FINAL)/2017/i",
+               "https://www.tfrrs.org/lists/3191/2021_NCAA_Division_I_Outdoor_Qualifying_(FINAL)/2021/o",
+               "https://www.tfrrs.org/lists/3194/2021_NCAA_Division_II_Outdoor_Qualifying_(FINAL)",
+               "https://www.tfrrs.org/lists/3195/2021_NCAA_Division_III_Outdoor_Qualifying_(FINAL)/2021/o",
+               "https://www.tfrrs.org/lists/3196/2021_NAIA_Outdoor_Qualifying_List_(FINAL)",
+               "https://www.tfrrs.org/lists/3157/2020_2021_NCAA_Div._I_Indoor_Qualifying_(FINAL)/2021/i",
+               "https://www.tfrrs.org/lists/3158/2020_2021_NCAA_Div._II_Indoor_Qualifying_(FINAL)",
+               "https://www.tfrrs.org/lists/3161/2020_2021_NCAA_Division_III_Indoor_Qualifying_List/2021/i",
+               "https://www.tfrrs.org/lists/3156/2020_2021_NAIA_Indoor_Qualifying_(FINAL)/2021/i")
 
-# Read meet name links
-links <- getMeetLinks(url)
+meetLinks <- c()
 
-# Create a links DF to upload links to AWS table, storing links for meets that have been scraped
-linksDf <- as.data.frame(links)
+for ( i in 1:length(joinLinks)) {
+  # Get meet URLs
+  meetUrls <- getPLMeetLinks(joinLinks[i])
+  
+  # Append
+  meetLinks <- append(meetLinks, meetUrls)
+}
 
-# Query links from link table
-linkTbl <- dbGetQuery(aws, "select * from meet_links")
-
-# Get new links (not in table)
-joinLinks <- linksDf %>%
-  filter(!(links %in% linkTbl$links))
-
-# Write data to table for URLs
-# dbRemoveTable(aws, "meet_links")
-# dbCreateTable(aws, "meet_links", linksDf)
-dbWriteTable(aws, "meet_links", joinLinks, append = TRUE)
-
-# Convert back to vector
-joinLinks <- joinLinks$links
+# Get rid of any doubles
+meetLinks <- funique(meetLinks)
 
 # Vector to hold runner URLs
 runnerLinks <- vector()
@@ -76,10 +95,10 @@ runner_lines <- runner_lines %>%
   )
 
 # Iterate over meets and get data
-for (i in 1:(length(joinLinks))) {
+for (i in 1:(length(meetLinks))) {
   # Check url
   # tempURL <- gsub("[[:space:]]", "", links[i])
-  tempURL <- joinLinks[i]
+  tempURL <- meetLinks[i]
   
   # Check URL validity
   if(class(try(tempURL %>%
@@ -93,7 +112,7 @@ for (i in 1:(length(joinLinks))) {
   print(paste0("Getting data for: ", tempURL))
   
   # Get runner URLs
-  tempLinks <- getIndoorRunnerURLs(joinLinks[i])
+  tempLinks <- getIndoorRunnerURLs(meetLinks[i])
   
   # Bind runners 
   runnerLinks <- append(runnerLinks, tempLinks)
@@ -107,7 +126,7 @@ runnerLinks <- funique(runnerLinks)
 # Error links
 errorLinks <- vector()
 
-for (i in 1:length(runnerLinks)) {
+for (i in 135481:length(runnerLinks)) {
   
   print(paste0("Getting data for runner ", i, " out of ", length(runnerLinks)))
   
@@ -134,13 +153,21 @@ currentData <- dbGetQuery(aws, "select * from race_results") %>%
   mutate(
     RUNNER_KEY = paste0(NAME, "-", GENDER, "-", TEAM)
   ) %>%
-  select(-c(load_d))
+  select(-c(load_d)) %>%
+  mutate(
+    IS_FIELD = FALSE,
+    MARK_TIME = TIME
+  ) %>%
+  rename(
+    MARK = TIME
+  )
 
 # Add load date to all records being uploaded
 runRecs <- runner_lines %>%
   filter(MEET_NAME != "meet") %>%
   funique() %>%
   mutate(
+   # TIME = as.numeric(TIME),
     PLACE = as.numeric(PLACE),
     MEET_DATE = lubridate::ymd(MEET_DATE),
     NAME = gsub("[^\x01-\x7F]", "", NAME)
@@ -159,11 +186,11 @@ uploadData <- rbind(runRecs, currentData) %>%
 
 # Upload runner data to table
 # Write data to table for URLs
-# dbRemoveTable(aws, "race_results")
-# dbCreateTable(aws, "race_results", uploadData)
+#dbRemoveTable(aws, "race_results")
+#dbCreateTable(aws, "race_results", uploadData)
 dbWriteTable(aws, "race_results", uploadData, overwrite = TRUE)
 
- # Update grouped tables
+# Update grouped tables
 # Group data
 runnerGrp <- groupedResults(uploadData)
 runnerGrpYrly <- groupedYearlyResults(uploadData)
@@ -174,4 +201,3 @@ runnerGrpYrly <- groupedYearlyResults(uploadData)
 # dbCreateTable(aws, "results_grouped_yr", runnerGrpYrly)
 dbWriteTable(aws, "results_grouped", runnerGrp, overwrite = TRUE)
 dbWriteTable(aws, "results_grouped_yr", runnerGrpYrly, overwrite = TRUE)
-

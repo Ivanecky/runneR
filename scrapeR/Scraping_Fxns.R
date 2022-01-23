@@ -71,21 +71,24 @@ handleTimes <- function(mark) {
   # Convert mark to character
   mark <- as.character(mark)
   # Check if mark has no colon (sprint time)
-  if (!(grepl(":", mark))) {
+  if (grepl('\"|m', mark, ignore.case = TRUE)) {
+    return(mark)
+  } else if (!(grepl(":", mark))) {
     # Handle the parentheses for ties, etc
     mark <- gsub("\\(.*","", mark)
     mark <- gsub("@.*","", mark)
     # Convert to numeric
-    mark <- as.numeric(mark)
+    # mark <- as.numeric(mark)
     return(mark)
   } else {
     # Split the tenths/hundreths off
-    split_mark = unlist(strsplit(mark, "[.]"))
+    # split_mark = unlist(strsplit(mark, "[.]"))
     # Split into minutes & seconds
-    min_sec = unlist(strsplit(split_mark[1], ":"))
+    min_sec <- unlist(strsplit(mark, ":"))
     # Calculate seconds from minutes and add seconds
-    total_time = as.numeric(min_sec[1])*60 + as.numeric(min_sec[2])
+    total_time <- as.numeric(min_sec[1])*60 + as.numeric(min_sec[2])
     # Return time 
+    total_time <- as.character(total_time)
     return(total_time)
   }
 }
@@ -200,7 +203,7 @@ runnerScrape <- function(url){
       # Vectors
       years <- c()
       events <- c()
-      times <- c()
+      marks <- c()
       places <- c()
       race_names <- c()
       dates <- c()
@@ -209,7 +212,7 @@ runnerScrape <- function(url){
       for(i in 1:length(keep_nodes))
       {
         # Check for a year (date)
-        if(grepl("2005|2006|2007|2008|2009|2010|2011|2012|2013|2014|2015|2016|2017|2018|2019|2020|2021|2022|2023", keep_nodes[i]))
+        if(grepl("2005|2006|2007|2008|2009|2010|2011|2012|2013|2014|2015|2016|2017|2018|2019|2020|2021|2022|2023|2024", keep_nodes[i]))
         {
           # Convert to string
           node_str <- as.character(keep_nodes[i])
@@ -234,6 +237,7 @@ runnerScrape <- function(url){
             grepl('2020', node_str) ~ '2020',
             grepl('2021', node_str) ~ '2021',
             grepl('2022', node_str) ~ '2022',
+            grepl('2023', node_str) ~ '2024',
             T ~ 'OTHER'
           )
           
@@ -307,12 +311,45 @@ runnerScrape <- function(url){
             # Split the next string into event, time and place
             result_split <- unlist(str_split(keep_nodes[j], " "))
             # Check to see if event is field event
-            if(result_split[1] %in% c("HJ","LJ","TJ","PV","SP","DT","HT","JT","Hep","Dec"))
+            # Handle sprints
+            if(result_split[1] %in% c("60", "60H", "100", "200", "100H", "110H", "400H", "110SH", "300", "400"))
             {
+              # Handle sprints
               event <- result_split[1]
-              place <- NA
-              time <- NA
-            } else {
+              
+              # Get place (need code to handle sprinters)
+              place <- case_when(
+                length(result_split) == 5 ~ result_split[4],
+                T ~ result_split[3]
+              )
+              # Get time
+              mark <- result_split[2]
+              
+            } else if (result_split[1] %in% c("HJ","LJ","TJ","PV","SP","DT","HT","JT","Hep","Dec","Pent")) {
+              # Handle field events
+              # Indicate if result is XC or not
+              event <- result_split[1]
+
+              # Get place (need code to handle sprinters)
+              place <- case_when(
+                length(result_split) == 7 ~ result_split[6],
+                length(result_split) == 6 ~ result_split[5],
+                T ~ result_split[5]
+              )
+              # Get distance (height, throw) using metric distance (easier)
+              mark <- result_split[2]
+              
+            } else if(result_split[1] %in% c("4x400", "4x100", "4x200", "4x800", "DMR", "SMR", "800SMR")) { 
+              # Handle relays
+              event <- result_split[1]
+
+              # Get place (need code to handle sprinters)
+              place <- result_split[3]
+              
+              # Get time
+              mark <- result_split[2]
+              
+            } else { # Handle distance events
               # Indicate if result is XC or not
               event <- case_when(
                 xc_flag ~ paste0(result_split[1], " XC"),
@@ -324,12 +361,12 @@ runnerScrape <- function(url){
                 T ~ result_split[3]
               )
               # Get time
-              time <- result_split[2]
+              mark <- result_split[2]
             }
             # Get the pieces
             years <- append(years, year)
             events <- append(events, event)
-            times <- append(times, time)
+            marks <- append(marks, mark)
             places <- append(places, place)
             race_names <- append(race_names, race_name)
             dates <- append(dates, temp_race_date)
@@ -339,17 +376,17 @@ runnerScrape <- function(url){
       }
       
       # Check if vectors are null
-      if (is.null(years) | is.null(events) | is.null(times) | is.null(places) | is.null(race_names) | is.null(dates) | is.null(prelims)) {
+      if (is.null(years) | is.null(events) | is.null(marks) | is.null(places) | is.null(race_names) | is.null(dates) | is.null(prelims)) {
         # Print error message
         print(paste0("Error getting data for: ", runner_name))
         # Set to empty, default values
-        athlete <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division"))
+        athlete <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division", FALSE, "1"))
         # Rename columns
-        names(athlete) = c("YEAR", "EVENT", "TIME", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION")
+        names(athlete) = c("YEAR", "EVENT", "MARK", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION", "IS_FIELD", "MARK_TIME")
       } else {
         # Create a data frame
-        athlete <- as.data.frame(cbind(years, events, times, places, race_names, dates, prelims))
-        names(athlete) <- c("YEAR", "EVENT", "TIME", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM")
+        athlete <- as.data.frame(cbind(years, events, marks, places, race_names, dates, prelims))
+        names(athlete) <- c("YEAR", "EVENT", "MARK", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM")
       }
       
       # Remove results where athlete competed in field event
@@ -360,17 +397,14 @@ runnerScrape <- function(url){
           MEET_DATE = as.character(MEET_DATE)
         ) %>%
         mutate(
-          EVENT = gsub("[^\x01-\x7F]", "", EVENT)
-        ) %>%
-        filter(!(EVENT %in% c("HJ","LJ","TJ","PV","SP","DT","HT","JT","Hep","Dec")))
+          EVENT = gsub("[^\x01-\x7F]", "", EVENT),
+          MEET_DATE = lubridate::ymd(gsub(",", "", MEET_DATE))
+        )
   
       # Make sure athlete has rows (sprinters get removed)
       if ((nrow(athlete) > 0)) {
         # Clean up and group to one row per event
         athlete <- athlete %>%
-          mutate(
-            MEET_DATE = gsub(",", "", MEET_DATE)
-          ) %>%
           mutate(
             EVENT = case_when(
               grepl("5000|5K|5k", EVENT) & (lubridate::month(lubridate::ymd(MEET_DATE)) %in% c(8, 9, 10, 11)) ~ "5K XC",
@@ -379,55 +413,81 @@ runnerScrape <- function(url){
               grepl("mile|Mile|MILE", EVENT) ~ "Mile",
               grepl("4K|4.1K", EVENT) ~ "4K XC",
               grepl("6K|6k|6000|6.", EVENT) & (lubridate::month(lubridate::ymd(MEET_DATE)) %in% c(8, 9, 10, 11)) ~ "6K XC",
-              grepl("800|800m", EVENT) & !grepl("8000m|8000", EVENT) ~ "800m",
+              grepl("800|800m", EVENT) & !grepl("8000m|8000", EVENT) & !grepl("SMR", EVENT) ~ "800m",
               grepl("8k|8K|8000m", EVENT) & !grepl("\\.", EVENT) ~ "8K XC",
               grepl("10,000|10K|10k|10000", EVENT) & grepl("XC|xc|Xc", EVENT) ~ "10K XC",
               grepl("10,000|10K|10k|10000", EVENT) & (lubridate::month(lubridate::ymd(MEET_DATE)) %in% c(10, 11)) ~ "10K XC",
               grepl("10,000|10K|10k|10000", EVENT) & !(grepl("XC|xc|Xc", EVENT)) ~ "10K",
               grepl("1500|1500m", EVENT) & !grepl("4x", EVENT) ~ "1500m",
               grepl("3000S|3000s|3000SC|3000sc|3000mS", EVENT) ~ "3000S",
+              grepl("HJ|LJ|TJ|PV|SP|DT|HT|JT|Hep|Dec|Pent", EVENT) ~ EVENT,
+              grepl("4x400|4x100|4x200|4x800|DMR|SMR|800SMR", EVENT) ~ EVENT,
+              grepl("60", EVENT) & !grepl("6K|6000m", EVENT) ~ "60m",
+              grepl("60H", EVENT, ignore.case = TRUE) ~ "60H",
+              grepl("60SH", EVENT, ignore.case = TRUE) ~ "60SH",
+              grepl("100", EVENT) & !grepl("1000m|1K|1000", EVENT, ignore.case = TRUE) ~ "100m",
+              grepl("100H", EVENT, ignore.case = TRUE) ~ "100H",
+              grepl("100SH", EVENT, ignore.case = TRUE) ~ "100SH",
+              grepl("110SH", EVENT, ignore.case = TRUE) ~ "110SH",
+              grepl("110H", EVENT, ignore.case = TRUE) ~ "110H",
+              grepl("400H", EVENT, ignore.case = TRUE) ~ "400H",
+              grepl("400", EVENT) & !grepl("4x400|4000m|4000", EVENT, ignore.case = TRUE) ~ "400m",
+              grepl("1000", EVENT) & !grepl("10000|10,000|10K", EVENT, ignore.case = TRUE) ~ "1000m",
               T ~ "OTHER"
             ),
             PLACE = as.character(PLACE)
           ) %>%
-          filter(grepl("th|TH|st|ST|nd|ND|rd|RD", PLACE)) %>%
+          # filter(grepl("th|TH|st|ST|nd|ND|rd|RD", PLACE, ignore.case = TRUE)) %>%
           mutate(
             PLACE = as.numeric(gsub("th|TH|st|ST|nd|ND|rd|RD", "", PLACE))
           ) %>%
-          filter(!is.na(PLACE)) %>%
+          # filter(!is.na(PLACE)) %>%
           mutate(
-            TIME = as.character(TIME)
-            )
+            MARK = as.character(MARK)
+          )
         
         # Check to see if data was nullified
         if (nrow(athlete) == 0) {
           # Set to empty, default values
-          athlete <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division"))
+          athlete <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division", FALSE, "1"))
           # Rename columns
-          names(athlete) = c("YEAR", "EVENT", "TIME", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION")
+          names(athlete) = c("YEAR", "EVENT", "MARK", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION", "IS_FIELD", "MARK_TIME")
           # Return
           return(athlete)
         } 
         
         # Apply function to convert times to numbers
-        athlete$TIME <- sapply(athlete$TIME, handleTimes)
+        athlete$MARK <- marks # sapply(athlete$TIME, handleTimes)
         athlete$NAME <- runner_name
         athlete$GENDER <- gender
         athlete$TEAM <- team_name
         athlete$DIVISION <- team_division
         
+        # Apply the handle times function to the mark column on a selective basis
+        athlete <- athlete %>%
+          mutate(
+            IS_FIELD = case_when(
+              EVENT %in% c("HJ","LJ","TJ","PV","SP","DT","HT","JT","Hep","Dec","Pent") ~ TRUE,
+              T ~ FALSE
+            )
+          ) %>%
+          rowwise() %>%
+          mutate(
+            MARK_TIME = handleTimes(MARK)
+          )
+        
       } else if (nrow(athlete) == 0) {
         # Set to empty, default values
-        athlete <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division"))
+        athlete <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division", FALSE, "1"))
         # Rename columns
-        names(athlete) = c("YEAR", "EVENT", "TIME", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION")
+        names(athlete) = c("YEAR", "EVENT", "MARK", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION", "IS_FIELD", "MARK_TIME")
       } else {
         # Set to empty, default values
-        athlete <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division"))
+        athlete <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division", FALSE, "1"))
         # Rename columns
-        names(athlete) = c("YEAR", "EVENT", "TIME", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION")
+        names(athlete) = c("YEAR", "EVENT", "MARK", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION", "IS_FIELD", "MARK_TIME")
       }
-    
+      
       # Final return call
       return(athlete)
     }

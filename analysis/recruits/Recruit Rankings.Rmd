@@ -8,7 +8,7 @@ output: html_document
 # Setup
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_chunk$set(fig.width=12, fig.height=8) 
+knitr::opts_chunk$set(fig.width=14, fig.height=10) 
 
 library(tidyverse)
 library(dplyr)
@@ -17,7 +17,7 @@ library(ggrepel)
 
 # Read data
 #df <- read.csv("/Users/samivanecky/git/runneR/analysis/recruits/D1 Women Recruit Rankings 2021-2022 - All.csv")
-df <- read.csv("/Users/samivanecky/Downloads/D2 Women's Recruit Rankings - ALL.csv")
+df <- read.csv("/Users/samivanecky/Downloads/D1 Men Recruit Ranking 2021_2022 - All.csv")
 ```
 
 # Clean Up Data
@@ -49,7 +49,7 @@ handleTimes <- function(mark) {
 ```
 
 ## Clean Up Times
-```{r}
+```{r warning=FALSE}
 df <- df %>%
   rowwise() %>%
   mutate(
@@ -71,11 +71,13 @@ df <- df %>%
     C_15_16 = X1500 + 19,
     C_Mile_16 = Mile - 2,
     C_3k_32 = X3000 + 44,
-    C_2m_32 = X2.Mile - 5
+    C_2m_32 = X2.Mile - 5,
+    C_5k_XC = X5k + 15
   ) %>%
   mutate(
     Best_1600_Conv = min(c(C_15_16, C_Mile_16, X1600), na.rm = T),
-    Best_3200_Conv = min(c(X3200, C_3k_32, C_2m_32), na.rm = T)
+    Best_3200_Conv = min(c(X3200, C_3k_32, C_2m_32), na.rm = T),
+    Best_5k_Conv = min(c(X5k, C_5k_XC), na.rm = T)
   ) %>%
   ungroup()
 ```
@@ -121,8 +123,8 @@ r32 <- df %>%
 
 # 5k XC
 r5k <- df %>%
-  filter(!is.na(X5k..XC.) & is.finite(X5k..XC.)) %>%
-  arrange(desc(X5k..XC.)) %>%
+  filter(!is.na(Best_5k_Conv) & is.finite(Best_5k_Conv)) %>%
+  arrange(desc(Best_5k_Conv)) %>%
   mutate(
     Rank_5k_XC = 1:n()
   ) %>%
@@ -158,7 +160,7 @@ rankDf <- rankDf %>%
 ```{r}
 teamRank <- rankDf %>%
   group_by(Team) %>%
-  top_n(5, Weighted_Avg_Score) %>%
+  # top_n(5, Weighted_Avg_Score) %>%
   summarise(
     N_Runers = n_distinct(Athlete.Name),
     Total_Score = sum(Total_Score),
@@ -177,53 +179,72 @@ teamRank <- rankDf %>%
   ) %>%
   ungroup() %>%
   mutate(
+    Total_Weighted_Norm = ((Total_Weighted_Score - min(Total_Weighted_Score)) / (max(Total_Weighted_Score) - min(Total_Weighted_Score))),
+    Avg_Weighted_Norm = ((Avg_Weighted_Score - min(Avg_Weighted_Score)) / (max(Avg_Weighted_Score) - min(Avg_Weighted_Score)))
+  ) %>%
+  mutate(
     Weighted_Score = (Total_Score * 0.1) + (Avg_Score * 0.5) + (Avg_Best_Event * 0.4),
-    Weighted_Score_V2 = (Total_Weighted_Score * 0.25) + (Avg_Weighted_Score * 0.75)
+    Weighted_Score_V2 = (Total_Weighted_Score * 0.25) + (Avg_Weighted_Score * 0.75),
+    Weighted_Score_V3 = (Total_Weighted_Norm * 0.25) + (Avg_Weighted_Norm * 0.75)
   )
 ```
 
 # Write Data to CSV
 ```{r}
-write.csv(teamRank, "teamRankD2Women.csv")
-write.csv(rankDf, "runnerRankD2Women.csv")
+write.csv(teamRank, "teamRankD1Men.csv")
+write.csv(rankDf, "runnerRankD1Men.csv")
 ```
 
 # Visuals
 ## Weighted Team Score
 ```{r}
-ggplot(teamRank, aes(reorder(Team, Weighted_Score), Weighted_Score, fill = Team)) +
-  geom_bar(stat = "identity") +
-  ggtitle("Teams by Weighted Score", subtitle = "Using top 5 recruits per school.") +
+ggplot(teamRank, aes(reorder(Team, Weighted_Score), Weighted_Score)) +
+  geom_bar(stat = "identity", fill = "#66CCFF", color = "navy") +
+  ggtitle("Women's Teams by Weighted Score", subtitle = "Weighted score is 40% best event score, 50% average score, and 10% total score.") +
   theme_minimal() + 
   labs(
     x = "Team",
     y = "Weighted Score"
   ) +
+  ggplot2::theme_minimal() +
   ggplot2::theme(
-      plot.title = ggplot2::element_text(face = "bold"),
-      plot.title.position = "plot",
-      text = element_text(size=15),
-      axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
-      legend.position = "none"
-    ) +
+    aspect.ratio = 9 / 16,
+    plot.title = ggplot2::element_text(face = "bold", size = 18),
+    plot.title.position = "panel",
+    text = element_text(size=10),
+    axis.text.y = element_text(face = "italic"),
+    legend.position = "none",
+    axis.title.x = element_text(face = "bold", size = 12),
+    axis.title.y = element_text(face = "bold", size = 12)
+  ) +
   coord_flip()
 ```
 
 ## Weighted Score V2
 ```{r}
-ggplot(teamRank, aes(reorder(Team, Weighted_Score_V2), Weighted_Score_V2, fill = Team)) +
-  geom_bar(stat = "identity") +
-  ggtitle("Teams by Weighted Score (V2)", subtitle = "Weighted score V2: 75% avg. weighted score, 25% best weighted score.") +
-  theme_minimal() + 
-  labs(
-    x = "Team",
-    y = "Weighted Score"
-  ) +
-  theme(
-    legend.position = "none",
-    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1)
-  ) +
-  coord_flip()
+teamRank %>%
+  filter(N_Runers >= 3) %>%
+  ggplot(aes(reorder(Team, Weighted_Score_V3), Weighted_Score_V3)) +
+    geom_bar(stat = "identity", fill = "#66CCFF", color = "navy") +
+    ggtitle("Men's Teams by Weighted Score (V3)", subtitle = "Weighted score V3: 75% avg. weighted score, 25% total weighted score.") +
+    theme_minimal() + 
+    labs(
+      x = "Team",
+      y = "Weighted Score (V3)",
+      caption = "Teams require minimum 3 recruits."
+    ) +
+    ggplot2::theme_minimal() +
+    ggplot2::theme(
+      aspect.ratio = 9 / 16,
+      plot.title = ggplot2::element_text(face = "bold", size = 18),
+      plot.title.position = "panel",
+      text = element_text(size=10),
+      axis.text.y = element_text(face = "italic"),
+      legend.position = "none",
+      axis.title.x = element_text(face = "bold", size = 12),
+      axis.title.y = element_text(face = "bold", size = 12)
+    ) +
+    coord_flip()
 ```
 
 # Weighted vs Weighted V2

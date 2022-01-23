@@ -63,6 +63,35 @@ getMeetLinks <- function(url = "https://www.tfrrs.org/results_search.html") {
   return(meets)
 }
 
+getPLMeetLinks <- function(url) {
+  
+  # Get runner links
+  meets <- url %>%
+    GET(., timeout(30)) %>%
+    read_html() %>%
+    html_nodes(xpath = "//tr/td/a") %>%
+    html_attr("href")
+  
+  # Filter to results only
+  meets <- meets[grepl("results", meets)]
+  
+  # Keep unique
+  meets <- funique(meets)
+  
+  # Manipulate strings
+  for ( i  in 1:length(meets) )
+  {
+    temp <- meets[i]
+    temp <- paste0("https:", temp)
+    temp <- gsub("[[:space:]]", "", temp)
+    # temp <- paste0(substr(temp, 1, nchar(temp)-3), "tml")
+    meets[i] <- temp
+  }
+  
+  # Return
+  return(meets)
+}
+
 # Wrap runnerscrape function
 getRunner <- function(url) {
   runner <- tryCatch(
@@ -101,8 +130,9 @@ getIndoorRunnerURLs <- function(url) {
     html_attr("href")
   
   # Filter out select URLs
-  eventLinks <- eventLinks[grepl("results", eventLinks) & grepl("1_Mile|800m|400m|3000m|5000m|1000m|600m|3,000m|1,000m|5,000m", eventLinks)]
-  
+  # eventLinks <- eventLinks[grepl("results", eventLinks) & grepl("1_Mile|800|400m|3000|5000|10000|600|3,000m|1,000m|5,000m|1,500m|1500m|3,000mS|
+  #                                                               |10,000|3000_M_S|1500", eventLinks)]
+  eventLinks <- eventLinks[grepl("results", eventLinks)]
   # Create empty vector for runner URLs
   runnerURLs <- vector()
   
@@ -265,7 +295,11 @@ genCal <- function(startDate = "2012-01-01") {
   cal <- cal %>%
     mutate(
       # Combination of week & year for grouping purposes
-      week_key = paste0(lubridate::week(cal_d), "-", lubridate::year(cal_d))
+      week_key = paste0(lubridate::year(cal_d), "-", lubridate::week(cal_d)),
+      month_key = paste0(lubridate::year(cal_d), "-", lubridate::month(cal_d)),
+      year_index = lubridate::year(cal_d),
+      month_index = lubridate::month(cal_d),
+      week_index = lubridate::week(cal_d)
     )
   # Return
   return(cal)

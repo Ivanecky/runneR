@@ -29,13 +29,14 @@ library(ggrepel)
 library(zoo)
 library(dplyr)
 library(teamcolors)
+library(gt)
 
 # Connect to AWS
 # Read connection data from yaml
 aws.yml <- read_yaml("/Users/samivanecky/git/TrackPowerRankings/aws.yaml")
 
 # Source file for functions
-source("/Users/samivanecky/git/runneR//scrapeR/Scraping_Fxns.R")
+source("/Users/samivanecky/git/runneR/scrapeR/Scraping_Fxns.R")
 source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
 
 # Connect to database
@@ -56,17 +57,12 @@ reformatTimes <- function(mark) {
 ```
 
 # Data Setup
-## Query Base Data
+## Run Script to Load Data, Query Data
 ```{r}
-# Query data tables from AWS
-lines <- dbGetQuery(aws, "select * from race_results")
-
-grpLines <- dbGetQuery(aws, "select * from results_grouped_yr")
-
-grpAllTime <- dbGetQuery(aws, "select * from results_grouped")
+source("/Users/samivanecky/git/runneR/scrapeR/dataCleaneR.R")
 ```
 
-## Aggregate Base Data
+# Add Metrics to Core Data
 ```{r}
 # Create calendar data
 cal <- genCal()
@@ -119,7 +115,10 @@ lines <- lines %>%
     )
   ) %>%
   filter(!is.na(MEET_NAME) & MEET_NAME != "")
+```
 
+# Clean Up Bad Data
+```{r}
 # Filter out bad data
 lines <- lines %>%
   filter(
@@ -129,22 +128,13 @@ lines <- lines %>%
     (GENDER == "M" & !((EVENT == "800m" & (TIME <= 100 | TIME >= 240)) | (EVENT == "Mile" & (TIME <= 200 | TIME >= 500)) |
                     (EVENT == "1500m" & (TIME <= 190 | TIME >= 490)) | (EVENT == "3000m" & (TIME <= 400 | TIME >= 900)) |
                     (EVENT == "5000m" & (TIME <= 660 | TIME >= 1500))))
+  ) %>%
+  filter(
+    !(MEET_NAME == "WSC Relays and Multi-Events Qualifier" & EVENT == "800m") &
+    !(EVENT == "10K" & EVENT_TYPE == "INDOOR") &
+    !(TIME < 120 & GENDER == "F" & EVENT == "800m" & (NAME != "ATHING MU" | NAME != "RAEVYN ROGERS")) &
+    !(EVENT == "800m" & TIME < 102)
   )
-
-# Clean up grouped times
-# runnerGrpYrly <- runnerGrpYrly %>%
-#   rowwise() %>%
-#   mutate(
-#     clean_avg_time = reformatTimes(floor(AVG_TIME)),
-#     clean_pr = reformatTimes(floor(PR))
-#   )
-
-# runnerGrp <- runnerGrp %>%
-#   rowwise() %>%
-#   mutate(
-#     clean_avg_time = reformatTimes(floor(AVG_TIME)),
-#     clean_pr = reformatTimes(floor(PR))
-#   )
 
 # Join calendar data to lines data
 rl <- lines %>%
@@ -152,7 +142,7 @@ rl <- lines %>%
 ```
 
 ## Recreate Grouped Yearly Data Using Competition Year
-```{r}
+```{r warning=FALSE}
 grpYrly <- lines %>%
   ungroup() %>%
   group_by(NAME, TEAM, GENDER, DIVISION, EVENT, EVENT_TYPE, competition_year) %>%
@@ -172,10 +162,10 @@ grpYrly <- lines %>%
   )
 ```
 
-## Race Grouped Data
-```{r}
+## Strength Of Competition
+```{r warning=FALSE}
 # Line item level
-raceGrp <- lines %>%
+raceGrp <- rl %>%
   group_by(MEET_NAME, MEET_DATE, competition_year, GENDER, EVENT, PRELIM) %>%
   arrange(
     TIME, .by_group = TRUE
@@ -189,60 +179,109 @@ raceGrp <- lines %>%
 # Get best weekly times
 raceBestWeekly <- rl %>%
   ungroup() %>%
-  group_by(EVENT, GENDER, week_key) %>%
+  group_by(EVENT, EVENT_TYPE, GENDER, year_index, week_index) %>%
   summarise(
-    best_time = min(TIME, na.rm = T),
-    avg_winning_time = mean(TIME[PLACE == 1], na.rm = T)
-  )
+    week_best_time = min(TIME, na.rm = T)
+  ) %>%
+  ungroup() %>%
+  group_by(GENDER, EVENT, EVENT_TYPE) %>%
+  arrange(year_index, week_index, .by_group = TRUE) %>%
+  mutate(
+    c_week_best_time = cummin(week_best_time)
+  ) %>%
+  filter(!is.na(year_index)) %>%
+  mutate(
+    week_key = paste0(year_index, "-", week_index)
+  ) %>%
+  select(EVENT, EVENT_TYPE, GENDER, week_key, week_best_time, c_week_best_time)
+
+raceBestMonthly <- rl %>%
+  ungroup() %>%
+  group_by(EVENT, EVENT_TYPE, GENDER, year_index, month_index) %>%
+  summarise(
+    month_best_time = min(TIME, na.rm = T)
+  ) %>%
+  ungroup() %>%
+  group_by(GENDER, EVENT, EVENT_TYPE) %>%
+  arrange(year_index, month_index, .by_group = TRUE) %>%
+  mutate(
+    c_month_best_time = cummin(month_best_time)
+  ) %>%
+  mutate(
+    month_key = paste0(year_index, "-", month_index)
+  ) %>%
+  select(EVENT, EVENT_TYPE, GENDER, month_key, month_best_time, c_month_best_time)
 
 # Create data for race strength (could get messy with heats...) - SOC = Strength of Competition
 raceSOC <- raceGrp %>%
   ungroup() %>%
   filter(PRELIM == FALSE) %>% 
   group_by(
-    MEET_NAME, MEET_DATE, competition_year, GENDER, EVENT
+    MEET_NAME, MEET_DATE, competition_year, GENDER, EVENT, EVENT_TYPE
   ) %>%
   summarise(
-    # avg_top_time = mean(TIME[PLACE <= 5], na.rm = T),
+    avg_top_time = mean(TIME[meet_evnt_rank <= 5], na.rm = T),
     n_runners = n_distinct(NAME),
     winning_time = min(TIME, na.rm = T)
-  )
-
-raceSOCTopTime <- raceGrp %>%
-  ungroup() %>%
-  filter(PRELIM == FALSE) %>% 
-  group_by(
-    MEET_NAME, MEET_DATE, competition_year, GENDER, EVENT
   ) %>%
-  slice_min(n = 5, order_by = TIME) %>%
-  summarise(
-    avg_top_time = mean(TIME, na.rm = T)
-  )
+  ungroup()
 
 # Join SOC data
 soc <- raceSOC %>%
-  inner_join(raceSOCTopTime, by = c("MEET_NAME", "MEET_DATE", "competition_year", "GENDER", "EVENT")) %>%
+  # inner_join(raceSOCTopTime, by = c("MEET_NAME", "MEET_DATE", "competition_year", "GENDER", "EVENT", "EVENT_TYPE")) %>%
   left_join(cal, by = c("MEET_DATE" = "cal_d")) %>%
-  left_join(raceBestWeekly, by = c("week_key", "EVENT", "GENDER"))
+  left_join(raceBestWeekly, by = c("week_key", "EVENT_TYPE", "GENDER", "EVENT")) %>%
+  left_join(raceBestMonthly, by = c("month_key", "EVENT_TYPE", "GENDER", "EVENT"))
+  # filter(n_runners > 1)
 
 # Create SOC value
 soc <- soc %>%
   mutate(
-    soc = round(((0.3 * (best_time / winning_time)) + ((avg_winning_time / avg_top_time) * 0.5) + ((avg_winning_time / winning_time) * 0.2)), 3)
+    soc = round(((0.1 * (month_best_time / winning_time)) + ((c_month_best_time / avg_top_time) * 0.4) + ((c_month_best_time / winning_time) * 0.5)), 5) * 100
   ) %>%
-  filter(!grepl("XC", EVENT) & competition_year >= 2020 & soc <= 3)
+  filter(!grepl("XC", EVENT) & competition_year >= 2017) %>%
+  filter(!(EVENT_TYPE == "INDOOR" & EVENT == "10K")) %>%
+    filter(
+    !(EVENT == "Mile" & EVENT_TYPE != "INDOOR") &
+    !(EVENT == "3000m" & EVENT_TYPE != "INDOOR") &
+    !(EVENT == "3000S" & EVENT_TYPE == "INDOOR") &
+    !(MEET_NAME == "WSC Relays and Multi-Events Qualifier" & EVENT == "800m")
+  )
 
 # Join SOC data to line level
 socJoin <- soc %>%
   ungroup() %>%
-  select(MEET_NAME, MEET_DATE, GENDER, EVENT, competition_year, soc)
+  select(MEET_NAME, MEET_DATE, GENDER, EVENT, competition_year, soc, week_best_time, c_week_best_time, month_best_time, c_month_best_time)
 
-raceGrp <- raceGrp %>%
+raceDets <- raceGrp %>%
   left_join(socJoin, by = c("MEET_DATE", "MEET_NAME", "GENDER", "competition_year", "EVENT")) %>% 
   filter(!is.na(soc))
 
+# Create a race performance metric
+raceDets <- raceDets %>%
+  group_by(MEET_NAME, MEET_DATE, GENDER, EVENT) %>%
+  mutate(
+    weighted_finish = ((max(place_behind_winner) - place_behind_winner) / max(place_behind_winner)),
+    weighted_finish_time = (time_behind_winner / min(TIME)),
+    weighted_time = 1- ((TIME - month_best_time) / month_best_time),
+    weighted_overall_time = 1 - ((TIME - c_month_best_time) / c_month_best_time)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    wsor = ((soc / 100) * weighted_finish) * 2 + (1 - weighted_finish_time) * (soc / 100) * 3 + (weighted_overall_time) * 5 # + (weighted_time) * 1.5
+  ) %>%
+  filter(
+    !(EVENT == "Mile" & EVENT_TYPE != "INDOOR") &
+    !(EVENT == "10K" & TIME < 1000) &
+    !(EVENT == "3000m" & EVENT_TYPE != "INDOOR")
+  ) %>%
+  mutate(
+    race_key = paste0(NAME, "-", EVENT, "-", MEET_DATE, "-", TIME, "-", PRELIM)
+  ) %>%
+  distinct(race_key, .keep_all = TRUE)
+
 # Runner season level
-raceGrpYrly <- raceGrp %>%
+raceGrpYrly <- raceDets %>%
   ungroup() %>%
   filter(PRELIM == FALSE) %>%
   group_by(
@@ -265,37 +304,6 @@ raceGrpYrly <- raceGrp %>%
     clean_avg_time = reformatTimes(floor(avg_time)),
     win_pct = round((wins / times_run) * 100, 3)
   )
-```
-
-## Create Weekly Performance Ranges
-```{r}
-wklyPerf <- rl %>%
-  group_by(EVENT, week_key, GENDER, DIVISION) %>%
-  arrange(TIME, .by_group = TRUE) %>%
-  mutate(
-    WEEKLY_RANK = 1:n()
-  ) %>%
-  mutate(
-    WEEKLY_RANK_PCT = round((max(WEEKLY_RANK) - WEEKLY_RANK) / max(WEEKLY_RANK), 3),
-    WEEKLY_RNRS = max(WEEKLY_RANK, na.rm = T)
-  ) %>%
-  select(
-    NAME, GENDER, TEAM, EVENT, DIVISION, week_key, WEEKLY_RANK, WEEKLY_RANK_PCT, WEEKLY_RNRS
-  ) %>%
-  group_by(NAME, GENDER, TEAM, EVENT, DIVISION, week_key) %>%
-  summarise(
-    WEEKLY_RANK = min(WEEKLY_RANK, na.rm = T),
-    WEEKLY_RANK_PCT = max(WEEKLY_RANK_PCT, na.rm = T),
-    WEEKLY_RNRS = max(WEEKLY_RNRS, na.rm = T)
-  ) %>%
-  funique()
-```
-
-## Join RL w/ Weekly Ranks
-```{r}
-rl <- rl %>%
-  left_join(wklyPerf, by = c("NAME", "GENDER", "TEAM", "DIVISION", "EVENT", "week_key")) %>%
-  funique()
 ```
 
 ## Pivot Out Personal Best Data
@@ -389,6 +397,7 @@ wDf %>%
   ) +
   ggplot2::theme_minimal() +
   ggplot2::theme(
+    aspect.ratio = 9 / 16,
     plot.title = ggplot2::element_text(face = "bold"),
     plot.title.position = "panel",
     text = element_text(size=20),
@@ -603,7 +612,7 @@ runnerGrpYrly %>%
 ## Get Top Runners
 ```{r}
 # Set event and gender
-evnt <- "800m"
+evnt <- "Mile"
 gender <- "F"
 type <- "INDOOR"
 
@@ -622,7 +631,7 @@ top %>%
   ggplot(aes(competition_year, avg_place, color = NAME, group = NAME)) +
   geom_point() +
   geom_line() +
-  geom_label(aes(label = NAME)) +
+  geom_label_repel(data = top[which(top$competition_year == 2019), ], aes(label = NAME)) +
   # geom_label(aes(label = clean_avg_time), fill = "white") +
   ggplot2::labs(
     x = "",
@@ -637,7 +646,8 @@ top %>%
     axis.text.y = element_text(face = "italic"),
     plot.title = ggplot2::element_text(size = 20, hjust = 0.5, vjust = 0.5, face = "bold"),
     plot.subtitle = element_text(face = "italic"),
-    text = element_text(size=12, face = "bold")
+    text = element_text(size=12, face = "bold"),
+    legend.position = "none"
   )
 ```
 
@@ -646,28 +656,126 @@ top %>%
 soc %>%
   ungroup() %>%
   funique() %>%
-  filter(GENDER == "M") %>%
+  filter(GENDER == "F") %>%
   slice_max(n = 15, order_by = soc) %>%
   ggplot(aes(reorder(paste0(MEET_NAME, "-", EVENT), soc), soc, fill = as.factor(competition_year))) +
   geom_bar(stat = "identity") +
-  geom_label(aes(label = soc), fill = "white") +
+  geom_label(aes(label = soc), fill = "white", size = 8) +
   ggplot2::labs(
     x = "",
     y = "SOC",
     caption = "Omitting XC competitions.",
-    title = "Top 15 Men's Races Based on Strength of Compeititon (SOC)",
-    subtitle = "Races shown from 2020-2022 seasons."
+    title = "Top 15 Women's Races Based on Strength of Competition (SOC)",
+    subtitle = "Races shown from 2017-2022 seasons."
   ) +
   ggplot2::theme_bw() +
   scale_fill_stata() +
   ggplot2::theme(
     aspect.ratio = 9 / 16,
     axis.text.y = element_text(face = "italic"),
-    plot.title = ggplot2::element_text(size = 20, hjust = 0.5, vjust = 0.5, face = "bold"),
+    plot.title = ggplot2::element_text(size = 30, hjust = 0.5, vjust = 0.5, face = "bold"),
     plot.subtitle = element_text(face = "italic"),
-    text = element_text(size=12, face = "bold")
+    text = element_text(size=22, face = "bold")
   ) + 
   guides(fill=guide_legend(title="Season")) +
   coord_flip()
 ```
 
+# WSOR
+```{r}
+raceDets %>%
+  mutate(
+    wsor = round(wsor, 4)
+  ) %>%
+  filter(
+   DIVISION == "D1" & GENDER == "F" & competition_year == "2021"
+  ) %>%
+  ungroup() %>%
+  slice_max(n = 25, order_by = wsor) %>%
+  ggplot(aes(reorder(paste0(NAME, " - ", TEAM, " - ", MEET_NAME), wsor), wsor, fill = as.factor(EVENT))) +
+  geom_bar(stat = "identity") +
+  geom_label(aes(label = wsor), fill = "white", size = 7) +
+  ggplot2::labs(
+    x = "",
+    y = "WSOR",
+    caption = "Omitting XC competitions.",
+    title = "Top 25 D1 Women's Races of 2022 Season",
+    subtitle = "Races are based on WSOR (Weighted Score of Run)."
+  ) +
+  ggplot2::theme_bw() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 30, hjust = 0.5, vjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    text = element_text(size=22, face = "bold")
+  ) +
+  guides(fill=guide_legend(title="Event")) +
+  coord_flip()
+```
+
+# Table of WSOR
+```{r}
+raceDets %>%
+  mutate(
+    wsor = round(wsor, 4)
+  ) %>%
+  filter(
+   DIVISION == "D1" & GENDER == "F" & competition_year == "2021"
+  ) %>%
+  ungroup() %>%
+  slice_max(n = 25, order_by = wsor) %>%
+  select(
+    NAME, TEAM, EVENT, PRELIM, clean_time, MEET_NAME, wsor
+  ) %>%
+  rename(
+    Name = NAME,
+    Team = TEAM,
+    Event = EVENT,
+    Prelim = PRELIM,
+    Time = clean_time,
+    Meet = MEET_NAME,
+    WSOR = wsor
+  ) %>%
+  gt()
+```
+
+# Best Runners of 2021
+```{r}
+raceDets %>%
+  mutate(
+    wsor = round(wsor, 4)
+  ) %>%
+  filter(
+   DIVISION == "D1" & GENDER == "F" & competition_year == 2021 & EVENT_TYPE == "INDOOR"
+  ) %>%
+  group_by(NAME, TEAM) %>%
+  summarise(
+    n_races = n_distinct(race_key),
+    avg_wsor = round(mean(wsor, na.rm = TRUE), 3)
+  ) %>%
+  ungroup() %>%
+  filter(n_races >= 2) %>%
+  slice_max(n = 50, order_by = avg_wsor) %>%
+  ggplot(aes(reorder(NAME, avg_wsor), avg_wsor, fill = as.factor(TEAM))) +
+  geom_bar(stat = "identity") +
+  geom_label(aes(label = avg_wsor), fill = "white", size = 7) +
+  ggplot2::labs(
+    x = "",
+    y = "Avg. WSOR",
+    caption = "",
+    title = "Top 50 D1 Women of 2021 Indoor Season",
+    subtitle = "Races are based on WSOR (Weighted Score of Run)."
+  ) +
+  ggplot2::theme_bw() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 30, hjust = 0.5, vjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    text = element_text(size=22, face = "bold"),
+    legend.position = "none"
+  ) +
+  guides(fill=guide_legend(title="Event")) +
+  coord_flip()
+```
