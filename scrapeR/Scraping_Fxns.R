@@ -68,29 +68,43 @@ getPerfListURLs <- function(url) {
 
 # Function to handle times
 handleTimes <- function(mark) {
-  # Convert mark to character
-  mark <- as.character(mark)
-  # Check if mark has no colon (sprint time)
-  if (grepl('\"|m', mark, ignore.case = TRUE)) {
-    return(mark)
-  } else if (!(grepl(":", mark))) {
-    # Handle the parentheses for ties, etc
-    mark <- gsub("\\(.*","", mark)
-    mark <- gsub("@.*","", mark)
-    # Convert to numeric
-    # mark <- as.numeric(mark)
-    return(mark)
-  } else {
-    # Split the tenths/hundreths off
-    # split_mark = unlist(strsplit(mark, "[.]"))
-    # Split into minutes & seconds
-    min_sec <- unlist(strsplit(mark, ":"))
-    # Calculate seconds from minutes and add seconds
-    total_time <- as.numeric(min_sec[1])*60 + as.numeric(min_sec[2])
-    # Return time 
-    total_time <- as.character(total_time)
-    return(total_time)
-  }
+  tryCatch(
+    {
+      if (is.na(mark)) {
+        return(mark)
+      } else {
+        # Convert mark to character
+        mark <- as.character(mark)
+        # Check if mark has no colon (sprint time)
+        if (grepl('\"|m', mark, ignore.case = TRUE)) {
+          return(mark)
+        } else if (!(grepl(":", mark))) {
+          # Handle the parentheses for ties, etc
+          mark <- gsub("\\(.*","", mark)
+          mark <- gsub("@.*","", mark)
+          # Convert to numeric
+          # mark <- as.numeric(mark)
+          return(mark)
+        } else {
+          # Split the tenths/hundreths off
+          # split_mark = unlist(strsplit(mark, "[.]"))
+          # Split into minutes & seconds
+          min_sec <- unlist(strsplit(mark, ":"))
+          # Calculate seconds from minutes and add seconds
+          total_time <- as.numeric(min_sec[1])*60 + as.numeric(min_sec[2])
+          # Return time 
+          total_time <- as.character(total_time)
+          return(total_time)
+        }
+      }
+    },
+    # Error and warning handling
+    error = function(cond) {
+      message(cond)
+      # Choose a return value in case of error
+      return(NA)
+    }
+  )
 }
 
 ## Function to select user agent 
@@ -114,10 +128,13 @@ runnerScrape <- function(url){
   
     # Clean up URL from potential whitespace
     url <- gsub("[[:space:]]", "", url)
+    
+    # Usr agent
+    usrAgnt <- randUsrAgnt()
   
     # Error checking. Validate URL
     if(class(try(url %>%
-                 GET(., timeout(30), user_agent(randUsrAgnt())) %>%
+                 GET(., timeout(30), user_agent(usrAgnt)) %>%
                  read_html())) == 'try-error') {
       print(paste0("Failed to get data for : ", url))
       return(NA)
@@ -125,7 +142,7 @@ runnerScrape <- function(url){
       
       # Get page HTML
       html <-  url %>%
-        GET(., timeout(30), user_agent(randUsrAgnt())) %>%
+        GET(., timeout(30), user_agent(usrAgnt)) %>%
         read_html()
     
       # Get the name of the runner off of TFRRS HTML
@@ -154,11 +171,23 @@ runnerScrape <- function(url){
       team_link <- paste0(substr(team_link, 1, nchar(team_link)-3), "tml")
       
       # Get text info for division
-      team_page <- team_link %>%
-        GET(., timeout(30)) %>%
-        read_html() %>%
-        html_node(xpath = "/html/body/form/div/div/div/div/div/div/span") %>%
-        html_text()
+      team_page <- tryCatch(
+        {
+          team_link %>%
+            GET(., timeout(30)) %>%
+            read_html() %>%
+            html_node(xpath = "/html/body/form/div/div/div/div/div/div/span") %>%
+            html_text()
+        },
+        # Error and warning handling
+        error = function(cond) {
+          message(paste("URL does not seem to exist:", url))
+          message("Here's the original error message:")
+          message(cond)
+          # Choose a return value in case of error
+          return(NA)
+        }
+      )
       
       # Assign division
       team_division <- case_when(
@@ -383,6 +412,8 @@ runnerScrape <- function(url){
         athlete <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division", FALSE, "1"))
         # Rename columns
         names(athlete) = c("YEAR", "EVENT", "MARK", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION", "IS_FIELD", "MARK_TIME")
+        # Return
+        return(athlete)
       } else {
         # Create a data frame
         athlete <- as.data.frame(cbind(years, events, marks, places, race_names, dates, prelims))
@@ -397,8 +428,7 @@ runnerScrape <- function(url){
           MEET_DATE = as.character(MEET_DATE)
         ) %>%
         mutate(
-          EVENT = gsub("[^\x01-\x7F]", "", EVENT),
-          MEET_DATE = lubridate::ymd(gsub(",", "", MEET_DATE))
+          EVENT = gsub("[^\x01-\x7F]", "", EVENT)
         )
   
       # Make sure athlete has rows (sprinters get removed)
@@ -437,11 +467,9 @@ runnerScrape <- function(url){
             ),
             PLACE = as.character(PLACE)
           ) %>%
-          # filter(grepl("th|TH|st|ST|nd|ND|rd|RD", PLACE, ignore.case = TRUE)) %>%
           mutate(
             PLACE = as.numeric(gsub("th|TH|st|ST|nd|ND|rd|RD", "", PLACE))
           ) %>%
-          # filter(!is.na(PLACE)) %>%
           mutate(
             MARK = as.character(MARK)
           )

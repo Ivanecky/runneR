@@ -12,8 +12,8 @@ library(yaml)
 library(rvest)
 
 # Load functions for scraping
-source("/Users/samivanecky/git/TrackPowerRankings/scrapeR/Scraping_Fxns.R")
-source("/Users/samivanecky/git/TrackPowerRankings/scrapeR/ResultsQuery.R")
+source("/Users/samivanecky/git/runneR/scrapeR/Scraping_Fxns.R")
+# source("/Users/samivanecky/git/TrackPowerRankings/scrapeR/ResultsQuery.R")
 
 # Define function
 getRunnerURLs <- function(url) {
@@ -65,6 +65,13 @@ getMeetLinks <- function(url = "https://www.tfrrs.org/results_search.html") {
 
 getPLMeetLinks <- function(url) {
   
+  if(class(try(url %>%
+               GET(., timeout(30), user_agent(randUsrAgnt())) %>%
+               read_html())) == 'try-error') {
+    print(paste0("Failed to get data for : ", url))
+    return(NA)
+  }
+  
   # Get runner links
   meets <- url %>%
     GET(., timeout(30)) %>%
@@ -96,7 +103,8 @@ getPLMeetLinks <- function(url) {
 getRunner <- function(url) {
   runner <- tryCatch(
     {
-      runnerScrape(url)
+      tempRunner <- runnerScrape(url)
+      return(tempRunner)
     },
     # Error and warning handling
     error = function(cond) {
@@ -107,8 +115,6 @@ getRunner <- function(url) {
       return(NA)
     }
   )
-  # Return result
-  return(runner)
 }
 
 # Function to get indoor meet runner URLs
@@ -138,11 +144,11 @@ getIndoorRunnerURLs <- function(url) {
   
   # Iterate over links to fix their formats
   for (i in 1:length(eventLinks)) {
-    temp = eventLinks[i]
+    temp <- eventLinks[i]
     #temp = substring(temp, 3)
-    temp = paste0("https:", temp)
-    temp = paste0(substr(temp, 1, nchar(temp)-3), "tml")
-    eventLinks[i] = temp
+    temp <- paste0("https:", temp)
+    temp <- paste0(substr(temp, 1, nchar(temp)-3), "tml")
+    eventLinks[i] <- temp
   }
   
   # Iterate over event links to get runners
@@ -153,6 +159,42 @@ getIndoorRunnerURLs <- function(url) {
   
   # Filter out teams and dups
   runnerURLs <- runnerURLs[grepl("athletes", runnerURLs)]
+  runnerURLs <- unique(runnerURLs)
+  
+  return(runnerURLs)
+}
+
+# Function to get indoor meet runner URLs
+getXCRunnerURLs <- function(url) {
+  
+  # Check URL validity
+  if(class(try(url %>%
+               GET(., timeout(30), user_agent(randUsrAgnt())) %>%
+               read_html())) == 'try-error') {
+    print(paste0("Failed to get data for : ", url))
+    return(NA)
+  }
+  
+  # Query HTML
+  pageLinks <- url %>%
+    GET(., timeout(30)) %>%
+    read_html() %>%
+    html_nodes(xpath = "//tbody/tr/td/div/a") %>%
+    html_attr("href")
+  
+  runner_links <- pageLinks[grepl("athletes", pageLinks)]
+  # Create empty vector for runner URLs
+  runnerURLs <- vector()
+  
+  # Iterate over links to fix their formats
+  for (i in 1:length(runner_links)) {
+    temp <- runner_links[i]
+    #temp = substring(temp, 3)
+    temp <- paste0("https:", temp)
+    temp <- paste0(substr(temp, 1, nchar(temp)-3), "tml")
+    runner_links[i] <- temp
+  }
+  
   runnerURLs <- unique(runnerURLs)
   
   return(runnerURLs)
@@ -201,20 +243,50 @@ xcMeetResQuery <- function(meetURL){
 }
 
 # Indoor meet results query
-indoorMeetResQuery <- function(meetURL){
-  # Get runner URLs
-  runnerLinks <- getIndoorRunnerURLs(meetURL)
+trackRunnerURLQuery <- function(meetUrls) {
+  
+  # Detect cores
+  cores <- detectCores()
+  cl <- makeCluster(cores[1] - 1, outfile = '/Users/samivanecky/git/TrackPowerRankings/scraperErrors.txt')
+  registerDoParallel(cl)
+  
+  runnerLinks <- foreach(i=1:length(meetUrls), .combine = append) %dopar% {
+    
+    source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
+    
+    tryCatch({
+      # Get runner
+      tempRunnerLinks <- getIndoorRunnerURLs(meetUrls[i])
+      # Return value
+      return(tempRunnerLinks)
+    },  
+    error=function(cond) {
+      message("Here's the original error message:")
+      message(cond)
+      # Sys.sleep(60)
+      return(NA)
+    }
+    )
+  }
+  
+  stopCluster(cl)
+  
+  # Return data
+  return(runnerLinks)
+}
+
+# Indoor meet results query
+indoorMeetResQuery <- function(runnerLinks) {
   
   # Create a temporary dataframe for runner line item performance
-  runner_lines = as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division"))
+  runner_lines <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division", FALSE, "1"))
   # Rename columns
-  names(runner_lines) = c("YEAR", "EVENT", "TIME", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION")
+  names(runner_lines) <- c("YEAR", "EVENT", "MARK", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION", "IS_FIELD", "MARK_TIME")
   # Reformat var
   runner_lines <- runner_lines %>%
     mutate(
       YEAR = as.character(YEAR),
       EVENT = as.character(EVENT),
-      TIME = as.numeric(TIME),
       PLACE = as.numeric(PLACE),
       NAME = as.character(NAME),
       GENDER = as.character(GENDER),
@@ -228,12 +300,21 @@ indoorMeetResQuery <- function(meetURL){
   
   runner_lines <- foreach(i=1:length(runnerLinks), .combine = rbind) %dopar% {
     
-    source("/Users/samivanecky/git/TrackPowerRankings/scrapeR/meetScrapingFxns.R")
+    source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
     
-    # Make function call
-    runner_temp <- getRunner(runnerLinks[i])
-    
-    runner_temp
+    tryCatch({
+      # Get runner
+      tempRunner <- getRunner(runnerLinks[i])
+      # Return value
+      return(tempRunner)
+    },  
+    error=function(cond) {
+      message("Here's the original error message:")
+      message(cond)
+      # Sys.sleep(60)
+      return(NA)
+    }
+    )
   }
   
   stopCluster(cl)

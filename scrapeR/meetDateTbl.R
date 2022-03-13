@@ -14,6 +14,7 @@ library(stringr)
 library(yaml)
 library(rvest)
 library(kit)
+library(stringi)
 
 # Load functions for scraping
 source("/Users/samivanecky/git/runneR/scrapeR/Scraping_Fxns.R")
@@ -33,7 +34,7 @@ aws <- dbConnect(
   port = aws.yml$port
 )
 
-joinLinks <- c("https://www.tfrrs.org/lists/2770/2019_2020_NCAA_Div._I_Indoor_Qualifying_(FINAL)/2020/i",
+plLinks <- c("https://www.tfrrs.org/lists/2770/2019_2020_NCAA_Div._I_Indoor_Qualifying_(FINAL)/2020/i",
                "https://www.tfrrs.org/lists/2771/2019_2020_NCAA_Div._II_Indoor_Qualifying_(FINAL)",
                "https://www.tfrrs.org/lists/2772/2019_2020_NCAA_Div._III_Indoor_Qualifying_(FINAL)/2020/i",
                "https://www.tfrrs.org/archived_lists/2568/2019_NCAA_Division_I_Outdoor_Qualifying_(FINAL)/2019/o",
@@ -63,150 +64,134 @@ joinLinks <- c("https://www.tfrrs.org/lists/2770/2019_2020_NCAA_Div._I_Indoor_Qu
                "https://www.tfrrs.org/lists/3161/2020_2021_NCAA_Division_III_Indoor_Qualifying_List/2021/i",
                "https://www.tfrrs.org/lists/3156/2020_2021_NAIA_Indoor_Qualifying_(FINAL)/2021/i")
 
-meetLinks <- c()
+plMeetLinks <- vector()
 
-for ( i in 1:length(joinLinks)) {
-  # Get meet URLs
-  meetUrls <- getPLMeetLinks(joinLinks[i])
-  
-  # Append
-  meetLinks <- append(meetLinks, meetUrls)
+# Iterate over PL pages and get links
+for (i in 1:length(plLinks)) {
+  # Print progress
+  print(paste0("Getting data for PL: ", i, " of ", length(plLinks)))
+  # Get meet links from PL page
+  tempPlLinks <- getPLMeetLinks(plLinks[i])
+  # Append to vector
+  plMeetLinks <- append(plMeetLinks, tempPlLinks)
 }
+
+# Remove duplicate links
+plMeetLinks <- funique(plMeetLinks)
+
+meetLinks <- dbGetQuery(aws, "select * from meet_links")
 
 # Get rid of any doubles
-meetLinks <- funique(meetLinks)
+meetLinks <- funique(meetLinks$links)
 
-# Vector to hold runner URLs
-runnerLinks <- vector()
+# Add PL meets to meets from tbl
+meetLinks <- append(meetLinks, plMeetLinks)
 
-# Create a temporary dataframe for runner line item performance
-runner_lines = as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division", FALSE, "1"))
-# Rename columns
-names(runner_lines) = c("YEAR", "EVENT", "MARK", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION", "IS_FIELD", "MARK_TIME")
-# Reformat var
-runner_lines <- runner_lines %>%
-  mutate(
-    YEAR = as.character(YEAR),
-    EVENT = as.character(EVENT),
-    PLACE = as.numeric(PLACE),
-    NAME = as.character(NAME),
-    GENDER = as.character(GENDER),
-    TEAM = as.character(TEAM)
+# Clean out links that are event specific
+meetLinks <- meetLinks[!(grepl("_Jump|_Vault|meteres|Meters|_Relay|Hurdles|_Throw|Mile|Pentathlon|Heptathlon|Shot_Put|Discus|Hammer|Javelin|Decathlon|Steeplechase", meetLinks, ignore.case = TRUE))]
+
+# Vectors to hold info
+meetNames <- vector()
+meetDates <- vector()
+meetFacs <- vector()
+meetTrkSz <- vector()
+
+# Iterate over meets
+for (i in 1:length(meetLinks)) {
+  # Print out which meet
+  print(paste0("Getting data for meet ", meetLinks[i]))
+  
+  # Go through meets and get dates
+  tempUrl <- meetLinks[i]
+  
+  # Get html txt
+  tempHtml <- tempUrl %>%
+    GET(., timeout(30)) %>%
+    read_html() 
+  
+  tempFacilityTxt <- tempHtml %>%
+    html_nodes(xpath = "/html/body/div[3]/div/div/div[2]/div/div[1]/div[1]/div[3]") %>%
+    html_text()
+  
+  tempTrackSize <- tempHtml %>%
+    html_nodes(xpath = "/html/body/div[3]/div/div/div[2]/div/div[1]/div[1]/div[4]") %>%
+    html_text()
+  
+  tempTxt <- tempHtml %>%
+    html_nodes(xpath = "/html/body/div[3]/div/div/div[2]/div/div[1]/div[1]/div[1]") %>%
+    html_text()
+  
+  tempMeetName <- tempHtml %>%
+    html_nodes(xpath = "/html/body/div[3]/div/div/div[1]/h3") %>%
+    html_text()
+  
+  # Drop new line char, etc
+  tempTxt <- gsub("[[:space:]]", "", tempTxt)
+  
+  # Get year
+  tempYr <- case_when(
+    grepl('2005', tempTxt) ~ '2005',
+    grepl('2006', tempTxt) ~ '2006',
+    grepl('2007', tempTxt) ~ '2007',
+    grepl('2008', tempTxt) ~ '2008',
+    grepl('2009', tempTxt) ~ '2009',
+    grepl('2010', tempTxt) ~ '2010',
+    grepl('2011', tempTxt) ~ '2011',
+    grepl('2012', tempTxt) ~ '2012',
+    grepl('2013', tempTxt) ~ '2013',
+    grepl('2014', tempTxt) ~ '2014',
+    grepl('2015', tempTxt) ~ '2015',
+    grepl('2016', tempTxt) ~ '2016',
+    grepl('2017', tempTxt) ~ '2017',
+    grepl('2018', tempTxt) ~ '2018',
+    grepl('2019', tempTxt) ~ '2019',
+    grepl('2020', tempTxt) ~ '2020',
+    grepl('2021', tempTxt) ~ '2021',
+    grepl('2022', tempTxt) ~ '2022',
+    grepl('2023', tempTxt) ~ '2023',
+    T ~ 'OTHER'
   )
-
-# Iterate over meets and get data
-for (i in 1:(length(meetLinks))) {
-  # Check url
-  # tempURL <- gsub("[[:space:]]", "", links[i])
-  tempURL <- meetLinks[i]
   
-  # Check URL validity
-  if(class(try(tempURL %>%
-               GET(., timeout(30), user_agent(randUsrAgnt())) %>%
-               read_html())) == 'try-error') {
-    print(paste0("Failed to get data for : ", tempURL))
-    next
-  }
+  # Get day number
+  tempDay <- stri_extract_first_regex(tempTxt, "[0-9]+")
   
-  # Print message for meet
-  print(paste0("Getting data for: ", tempURL))
+  # Get month
+  tempMon <- case_when(
+    grepl("Jan", tempTxt) ~ '1',
+    grepl('Feb', tempTxt) ~ '2',
+    grepl('Mar', tempTxt) ~ '3',
+    grepl("Apr", tempTxt) ~ '4',
+    grepl('May', tempTxt) ~ '5',
+    grepl('Jun', tempTxt) ~ '6',
+    grepl('Jul', tempTxt) ~ '7',
+    grepl('Aug', tempTxt) ~ '8',
+    grepl('Sep', tempTxt) ~ '9',
+    grepl('Oct', tempTxt) ~ '10',
+    grepl('Nov', tempTxt) ~ '11',
+    grepl('Dec', tempTxt) ~ '12',
+    T ~ '0'
+  )
   
-  # Get runner URLs
-  tempLinks <- getIndoorRunnerURLs(meetLinks[i])
+  # Combine into date
+  tempDt <- paste0(tempYr, "-", tempMon, "-", tempDay)
   
-  # Bind runners 
-  runnerLinks <- append(runnerLinks, tempLinks)
+  # Check for NULLs
+  tempFacilityTxt <- ifelse(identical(tempFacilityTxt, character(0)), "no location", tempFacilityTxt)
   
+  tempTrackSize <- ifelse(identical(tempTrackSize, character(0)), "no location", tempTrackSize)
+  
+  # Append to vectors
+  meetNames <- append(meetNames, tempMeetName)
+  meetDates <- append(meetDates, tempDt)
+  meetFacs <- append(meetFacs, tempFacilityTxt)
+  meetTrkSz <- append(meetTrkSz, tempTrackSize)
 }
 
-# Get unqiue runners
-runnerLinks <- funique(runnerLinks)
+# Create data frame
+meets <- as.data.frame(cbind(meetNames, meetDates, meetFacs, meetTrkSz))
+names(meets) <- c("meet_name", "meet_date", "meet_facility", "meet_track_size")
 
-# Get runner data
-# Error links
-errorLinks <- vector()
-
-for (i in 1:length(runnerLinks)) {
-  
-  print(paste0("Getting data for runner ", i, " out of ", length(runnerLinks)))
-  
-  tryCatch({
-    # Get runner
-    tempRunner <- runnerScrape(runnerLinks[i])
-    # Bind to temp df
-    runner_lines <- rbind(runner_lines, tempRunner)
-  },  
-  error=function(cond) {
-    message("Here's the original error message:")
-    message(cond)
-    # Choose a return value in case of error
-    errorLinks <- append(errorLinks, runnerLinks[i])
-    # Sys.sleep(60)
-  }
-  )
-  
-}
-
-# Upload to AWS database
-# Pull current data out of table
-currentData <- dbGetQuery(aws, "select * from race_results") %>%
-  mutate(
-    RUNNER_KEY = paste0(NAME, "-", GENDER, "-", TEAM)
-  ) %>%
-  select(-c(load_d)) %>%
-  mutate(
-    IS_FIELD = FALSE,
-    MARK_TIME = TIME
-  ) %>%
-  rename(
-    MARK = TIME
-  )
-
-# Add load date to all records being uploaded
-runRecs <- runner_lines %>%
-  filter(MEET_NAME != "meet") %>%
-  funique() %>%
-  mutate(
-   # TIME = as.numeric(TIME),
-    PLACE = as.numeric(PLACE),
-    # MEET_DATE = lubridate::ymd(MEET_DATE),
-    NAME = gsub("[^\x01-\x7F]", "", NAME)
-  ) %>%
-  mutate(
-    RUNNER_KEY = paste0(NAME, "-", GENDER, "-", TEAM)
-  )
-
-# Join data from old & new
-uploadData <- rbind(runRecs, currentData) %>%
-  funique() %>%
-  mutate(
-    load_d = lubridate::today()
-  ) %>%
-  filter(EVENT != "OTHER")
-
-# Reconnect
-aws <- dbConnect(
-  RPostgres::Postgres(),
-  host = aws.yml$host,
-  user = aws.yml$user,
-  password = aws.yml$password,
-  port = aws.yml$port
-)
-
-# Upload runner data to table
-# Write data to table for URLs
-#dbRemoveTable(aws, "race_results")
-#dbCreateTable(aws, "race_results", uploadData)
-dbWriteTable(aws, "race_results", uploadData, overwrite = TRUE)
-
-# Update grouped tables
-# Group data
-runnerGrp <- groupedResults(uploadData)
-runnerGrpYrly <- groupedYearlyResults(uploadData)
-
-# dbRemoveTable(aws, "results_grouped")
-# dbRemoveTable(aws, "results_grouped_yr")
-# dbCreateTable(aws, "results_grouped", runnerGrp)
-# dbCreateTable(aws, "results_grouped_yr", runnerGrpYrly)
-dbWriteTable(aws, "results_grouped", runnerGrp, overwrite = TRUE)
-dbWriteTable(aws, "results_grouped_yr", runnerGrpYrly, overwrite = TRUE)
+# Upload to a table
+# dbRemoveTable(aws, "meet_dates")
+# dbCreateTable(aws, "meet_dates", meets)
+dbWriteTable(aws, "meet_dates", meets, append = TRUE)

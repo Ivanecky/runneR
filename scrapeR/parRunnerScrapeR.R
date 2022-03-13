@@ -17,6 +17,8 @@ library(kit)
 library(RCurl)
 
 # Load functions for scraping
+# source("/Users/samivanecky/git/runneR/scrapeR/ResultsQuery.R")
+# source("/Users/samivanecky/git/runneR/scrapeR/Scraping_Fxns.R")
 source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
 
 # Connect to AWS
@@ -77,7 +79,6 @@ runner_lines <- runner_lines %>%
 # Iterate over meets and get data
 for (i in 1:(length(joinLinks))) {
   # Check url
-  # tempURL <- gsub("[[:space:]]", "", links[i])
   tempURL <- joinLinks[i]
   
   # Check URL validity
@@ -89,13 +90,32 @@ for (i in 1:(length(joinLinks))) {
   }
   
   # Print message for meet
-  print(paste0("Getting data for: ", tempURL))
+  print(paste0("Getting data for ", i, " out of ", length(joinLinks)))
   
   # Get runner URLs
-  tempLinks <- getIndoorRunnerURLs(joinLinks[i])
+  tryCatch({
+        # Get runner
+        tempRunnerLinks <- getIndoorRunnerURLs(joinLinks[i])
+        # Return value
+        return(tempRunnerLinks)
+      },  
+      error=function(cond) {
+        tryCatch({
+          # Get runner
+          tempRunnerLinks <- getXCRunnerURLs(joinLinks[i])
+          # Return value
+          return(tempRunnerLinks)
+        },  
+        error=function(cond) {
+          message("Here's the original error message:")
+          message(cond)
+          # Sys.sleep(60)
+          return(NA)
+        })
+      })
   
   # Bind runners 
-  runnerLinks <- append(runnerLinks, tempLinks)
+  runnerLinks <- append(runnerLinks, tempRunnerLinks)
   
 }
 
@@ -106,73 +126,25 @@ runnerLinks <- funique(runnerLinks)
 # Error links
 errorLinks <- vector()
 
-for (i in 1:length(runnerLinks)) {
-  
-  print(paste0("Getting data for runner ", i, " out of ", length(runnerLinks)))
-  
-  tryCatch({
-      # Get runner
-      tempRunner <- runnerScrape(runnerLinks[i])
-      # Bind to temp df
-      runner_lines <- rbind(runner_lines, tempRunner)
-    },  
-    error=function(cond) {
-      message("Here's the original error message:")
-      message(cond)
-      # Choose a return value in case of error
-      errorLinks <- append(errorLinks, runnerLinks[i])
-      # Sys.sleep(60)
-    }
+# TEST CODE
+# testDf <- indoorMeetResQuery(runnerLinks[1:1000])
+
+# Iterate over all the results and get runner results
+for (i in 1:(ceiling(length(runnerLinks) / 1000))) {
+  # Get results for i to i+1000
+  # Set boundaries
+  lowBound <- (1 + (1000 * (i-1)))
+  upBound <- case_when(
+    (1000 * i) > length(runnerLinks) ~ as.numeric(length(runnerLinks)),
+    T ~ (1000 * i)
   )
   
+  # Print for tracking
+  print(paste0("Getting data from ", lowBound, " to ", upBound))
+
+  # Get results
+  tempDf <- indoorMeetResQuery(runnerLinks[lowBound:upBound])
+  
+  # Append to dataframe
+  runner_lines <- rbind(runner_lines, tempDf)
 }
-
-# Reconnect to data
-# Connect to database
-aws <- dbConnect(
-  RPostgres::Postgres(),
-  host = aws.yml$host,
-  user = aws.yml$user,
-  password = aws.yml$password,
-  port = aws.yml$port
-)
-
-# Upload to AWS database
-# Pull current data out of table
-currentData <- dbGetQuery(aws, "select * from race_results") %>%
-  mutate(
-    RUNNER_KEY = paste0(NAME, "-", GENDER, "-", TEAM)
-  ) %>%
-  select(-c(load_d))
-
-# Add load date to all records being uploaded
-runRecs <- runner_lines %>%
-  filter(MEET_NAME != "meet") %>%
-  funique() %>%
-  mutate(
-    PLACE = as.numeric(PLACE),
-    NAME = gsub("[^\x01-\x7F]", "", NAME)
-  ) %>%
-  mutate(
-    RUNNER_KEY = paste0(NAME, "-", GENDER, "-", TEAM)
-  )
-
-# Remove runners who are in the new data
-currentData <- currentData %>%
-  filter(!(RUNNER_KEY %in% runRecs$RUNNER_KEY))
-
-# Join data from old & new
-uploadData <- rbind(runRecs, currentData) %>%
-  funique() %>%
-  mutate(
-    load_d = lubridate::today(),
-    MEET_DATE = gsub(",", "", MEET_DATE)
-  ) %>%
-  filter(EVENT != "OTHER")
-
-# Upload runner data to table
-# Write data to table for URLs
-# dbRemoveTable(aws, "race_results")
-# dbCreateTable(aws, "race_results", uploadData)
-dbWriteTable(aws, "race_results", uploadData, overwrite = TRUE)
-
