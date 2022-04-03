@@ -21,30 +21,20 @@ library(fastverse)
 library(tidytable)
 library(data.table)
 
-# Connect to AWS
-# Read connection data from yaml
-aws.yml <- read_yaml("/Users/samivanecky/git/TrackPowerRankings/aws.yaml")
-
 # Source file for functions
 source("/Users/samivanecky/git/runneR//scrapeR/Scraping_Fxns.R")
 source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
 
-# Connect to database
-aws <- dbConnect(
-  RPostgres::Postgres(),
-  host = aws.yml$host,
-  user = aws.yml$user,
-  password = aws.yml$password,
-  port = aws.yml$port
-)
+# Read connection data from yaml
+pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
 
-# Connect to Postgres
+# Connect to database
 pg <- dbConnect(
   RPostgres::Postgres(),
-  host = 'localhost',
-  user = 'samivanecky',
-  password = 'trackrabbit',
-  port = 5432
+  host = pg.yml$host,
+  user = pg.yml$user,
+  db = pg.yml$database,
+  port = pg.yml$port
 )
 
 # Function to return times in human readble format
@@ -78,10 +68,10 @@ convertMarks <- function(is_field, mark) {
 }
 
 # Query data tables from AWS
-lines <- dbGetQuery(aws, "select * from race_results")
+lines <- dbGetQuery(pg, "select * from runner_line_item_raw")
 
 # Query meet dates
-meet_dates <- dbGetQuery(aws, "select * from meet_dates") %>%
+meet_dates <- dbGetQuery(pg, "select * from meet_dates") %>%
   mutate(
     year = as.character(lubridate::year(lubridate::ymd(meet_date))),
     meet_date = lubridate::ymd(meet_date),

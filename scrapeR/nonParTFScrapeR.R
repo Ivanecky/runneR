@@ -21,18 +21,18 @@ source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
 
 # Connect to AWS
 # Read connection data from yaml
-aws.yml <- read_yaml("/Users/samivanecky/git/TrackPowerRankings/aws.yaml")
+pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
 
 # Connect to database
-aws <- dbConnect(
+pg <- dbConnect(
   RPostgres::Postgres(),
-  host = aws.yml$host,
-  user = aws.yml$user,
-  password = aws.yml$password,
-  port = aws.yml$port
+  host = pg.yml$host,
+  user = pg.yml$user,
+  db = pg.yml$database,
+  port = pg.yml$port
 )
 
-# Test URL
+# Meet results URL
 url <- "https://www.tfrrs.org/results_search.html"
 
 # Read meet name links
@@ -42,16 +42,16 @@ links <- getMeetLinks(url)
 linksDf <- as.data.frame(links)
 
 # Query links from link table
-linkTbl <- dbGetQuery(aws, "select * from meet_links")
+linkTbl <- dbGetQuery(pg, "select * from meet_links")
 
 # Get new links (not in table)
 joinLinks <- linksDf %>%
   filter(!(links %in% linkTbl$links))
 
 # Write data to table for URLs
-# dbRemoveTable(aws, "meet_links")
-# dbCreateTable(aws, "meet_links", linksDf)
-dbWriteTable(aws, "meet_links", joinLinks, append = TRUE)
+#dbRemoveTable(pg, "meet_links")
+#dbCreateTable(pg, "meet_links", linksDf)
+dbWriteTable(pg, "meet_links", joinLinks, append = TRUE)
 
 # Convert back to vector
 joinLinks <- joinLinks$links
@@ -129,23 +129,24 @@ for (i in 1:length(runnerLinks)) {
 
 # Reconnect to data
 # Connect to database
-aws <- dbConnect(
+pg <- dbConnect(
   RPostgres::Postgres(),
-  host = aws.yml$host,
-  user = aws.yml$user,
-  password = aws.yml$password,
-  port = aws.yml$port
+  host = pg.yml$host,
+  user = pg.yml$user,
+  db = pg.yml$database,
+  port = pg.yml$port
 )
+
 
 # Upload to AWS database
 # Pull current data out of table
-currentData <- dbGetQuery(aws, "select * from race_results") %>%
+currentData <- dbGetQuery(pg, "select * from results_line_item_dets") %>%
   mutate(
     RUNNER_KEY = paste0(NAME, "-", GENDER, "-", TEAM)
   ) %>%
   select(-c(load_d))
 
-# Add load date to all records being uploaded
+# Modifying data before loading
 runRecs <- runner_lines %>%
   filter(MEET_NAME != "meet") %>%
   funique() %>%
@@ -173,6 +174,6 @@ uploadData <- rbind(runRecs, currentData) %>%
 # Upload runner data to table
 # Write data to table for URLs
 # dbRemoveTable(aws, "race_results")
-# dbCreateTable(aws, "race_results", uploadData)
-dbWriteTable(aws, "race_results", uploadData, overwrite = TRUE)
+# dbCreateTable(pg, "runner_line_item_raw", runRecs)
+dbWriteTable(pg, "runner_line_item_raw", uploadData, overwrite = TRUE)
 
