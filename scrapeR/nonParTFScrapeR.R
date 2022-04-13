@@ -106,7 +106,7 @@ runnerLinks <- funique(runnerLinks)
 # Error links
 errorLinks <- vector()
 
-for (i in 1:length(runnerLinks)) {
+for (i in 2675:length(runnerLinks)) {
   
   print(paste0("Getting data for runner ", i, " out of ", length(runnerLinks)))
   

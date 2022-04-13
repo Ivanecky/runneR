@@ -33,7 +33,7 @@ library(gt)
 
 # Connect to AWS
 # Read connection data from yaml
-aws.yml <- read_yaml("/Users/samivanecky/git/TrackPowerRankings/aws.yaml")
+pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
 
 # Source file for functions
 source("/Users/samivanecky/git/runneR/scrapeR/Scraping_Fxns.R")

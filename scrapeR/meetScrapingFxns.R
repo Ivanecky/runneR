@@ -103,14 +103,11 @@ getPLMeetLinks <- function(url) {
 getRunner <- function(url) {
   runner <- tryCatch(
     {
-      tempRunner <- runnerScrape(url)
+      tempRunner <- runnerScrapeV2(url)
       return(tempRunner)
     },
     # Error and warning handling
     error = function(cond) {
-      message(paste("URL does not seem to exist:", url))
-      message("Here's the original error message:")
-      message(cond)
       # Choose a return value in case of error
       return(NA)
     }
@@ -135,9 +132,7 @@ getIndoorRunnerURLs <- function(url) {
     html_nodes(xpath = "//tbody/tr/td/a") %>%
     html_attr("href")
   
-  # Filter out select URLs
-  # eventLinks <- eventLinks[grepl("results", eventLinks) & grepl("1_Mile|800|400m|3000|5000|10000|600|3,000m|1,000m|5,000m|1,500m|1500m|3,000mS|
-  #                                                               |10,000|3000_M_S|1500", eventLinks)]
+  # Subset links
   eventLinks <- eventLinks[grepl("results", eventLinks)]
   # Create empty vector for runner URLs
   runnerURLs <- vector()
@@ -276,7 +271,7 @@ trackRunnerURLQuery <- function(meetUrls) {
 }
 
 # Indoor meet results query
-indoorMeetResQuery <- function(runnerLinks) {
+runnerResQuery <- function(runnerLinks) {
   
   # Create a temporary dataframe for runner line item performance
   runner_lines <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division", FALSE, "1"))
@@ -295,10 +290,10 @@ indoorMeetResQuery <- function(runnerLinks) {
   
   # Detect cores
   cores <- detectCores()
-  cl <- makeCluster(cores[1] - 1, outfile = '/Users/samivanecky/git/TrackPowerRankings/scraperErrors.txt')
+  cl <- makeCluster(cores[1] - 1, outfile = '/Users/samivanecky/git/runneR/scrapeR/scraperErrors.txt')
   registerDoParallel(cl)
   
-  runner_lines <- foreach(i=1:length(runnerLinks), .combine = rbind) %dopar% {
+  runner_lines <- foreach(i=1:length(runnerLinks), .combine = plyr::rbind.fill, .errorhandling = "pass", .verbose = TRUE) %dopar% {
     
     source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
     
