@@ -1,7 +1,8 @@
-# RUN THIS FOR INDOOR MEET SCRAPING
-# Code to generate line item performances from TFRRS in non-parallel process.
-# Code uses the TF meet scraping function to get runner links. Identical code for
-# XC can be found in the nonParXCScrapeR.R file
+# CODE DESCRIPTIONG
+# This code scrapes performance lists and current meet links to get updated information on facilities.
+# Data is used for determining track size, banked/flat, elevation, and location.
+
+# Load libraries
 library(tidymodels)
 library(httr)
 library(dplyr)
@@ -23,17 +24,18 @@ source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
 
 # Connect to AWS
 # Read connection data from yaml
-aws.yml <- read_yaml("/Users/samivanecky/git/TrackPowerRankings/aws.yaml")
+pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
 
 # Connect to database
-aws <- dbConnect(
+pg <- dbConnect(
   RPostgres::Postgres(),
-  host = aws.yml$host,
-  user = aws.yml$user,
-  password = aws.yml$password,
-  port = aws.yml$port
+  host = pg.yml$host,
+  user = pg.yml$user,
+  db = pg.yml$database,
+  port = pg.yml$port
 )
 
+# Performance list links
 plLinks <- c("https://www.tfrrs.org/lists/2770/2019_2020_NCAA_Div._I_Indoor_Qualifying_(FINAL)/2020/i",
                "https://www.tfrrs.org/lists/2771/2019_2020_NCAA_Div._II_Indoor_Qualifying_(FINAL)",
                "https://www.tfrrs.org/lists/2772/2019_2020_NCAA_Div._III_Indoor_Qualifying_(FINAL)/2020/i",
@@ -79,13 +81,17 @@ for (i in 1:length(plLinks)) {
 # Remove duplicate links
 plMeetLinks <- funique(plMeetLinks)
 
-meetLinks <- dbGetQuery(aws, "select * from meet_links")
+meetLinks <- dbGetQuery(pg, "select * from meet_links")
 
 # Get rid of any doubles
 meetLinks <- funique(meetLinks$links)
 
 # Add PL meets to meets from tbl
 meetLinks <- append(meetLinks, plMeetLinks)
+
+# Get current meet links 
+currentLinks <- getMeetLinks()
+meetLinks <- append(meetLinks, currentLinks)
 
 # Clean out links that are event specific
 meetLinks <- meetLinks[!(grepl("_Jump|_Vault|meteres|Meters|_Relay|Hurdles|_Throw|Mile|Pentathlon|Heptathlon|Shot_Put|Discus|Hammer|Javelin|Decathlon|Steeplechase", meetLinks, ignore.case = TRUE))]
@@ -95,6 +101,7 @@ meetNames <- vector()
 meetDates <- vector()
 meetFacs <- vector()
 meetTrkSz <- vector()
+errorLinks <- vector()
 
 # Iterate over meets
 for (i in 1:length(meetLinks)) {
@@ -103,6 +110,14 @@ for (i in 1:length(meetLinks)) {
   
   # Go through meets and get dates
   tempUrl <- meetLinks[i]
+  
+  if(class(try(tempUrl %>%
+               GET(., timeout(30), user_agent(randUsrAgnt())) %>%
+               read_html())) == 'try-error') {
+    print(paste0("Failed to get data for : ", tempUrl))
+    errorLinks <- append(errorLinks, tempUrl)
+    next
+  }
   
   # Get html txt
   tempHtml <- tempUrl %>%
@@ -191,7 +206,10 @@ for (i in 1:length(meetLinks)) {
 meets <- as.data.frame(cbind(meetNames, meetDates, meetFacs, meetTrkSz))
 names(meets) <- c("meet_name", "meet_date", "meet_facility", "meet_track_size")
 
+meets <- meets %>% 
+  funique()
+
 # Upload to a table
-# dbRemoveTable(aws, "meet_dates")
-# dbCreateTable(aws, "meet_dates", meets)
-dbWriteTable(aws, "meet_dates", meets, append = TRUE)
+dbRemoveTable(pg, "meet_dates")
+dbCreateTable(pg, "meet_dates", meets)
+dbWriteTable(pg, "meet_dates", meets, append = TRUE)

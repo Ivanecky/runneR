@@ -24,6 +24,17 @@ library(data.table)
 # Source file for functions
 source("/Users/samivanecky/git/runneR//scrapeR/Scraping_Fxns.R")
 source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
+source("/Users/samivanecky/git/runneR/scrapeR/altConversinFxns.R")
+
+# Read in conversion data for track size
+trckSz <- read.csv("/Users/samivanecky/git/runneR/ncaa_size_conversion.csv")
+trckSz <- trckSz %>%
+  mutate(
+    gender = case_when(
+      gender == "men" ~ "M",
+      T ~ "F"
+    )
+  )
 
 # Read connection data from yaml
 pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
@@ -37,38 +48,12 @@ pg <- dbConnect(
   port = pg.yml$port
 )
 
-# Function to return times in human readble format
-reformatTimes <- function(mark) {
-  sec <- str_pad((mark %% 60), width = 2, side = "left", pad = "0")
-  min <- floor(mark / 60)
-  time <- paste0(min, ":", sec)
-  return(time)
-}
-
-handleFieldEvents <- function(mark) {
-  # Check for meters
-  if (grepl("m", mark)) {
-    newMark <- as.numeric(gsub("m", "", mark))
-    return(newMark)
-  } else if (grepl("'", mark)) { # Check for feet
-    newMark <- as.numeric(gsub("'", "", mark)) * 0.3048
-    return(newMark)
-  } else { # Handle all other situations
-    return(-999)
-  }
-}
-
-convertMarks <- function(is_field, mark) {
-  MARK_TIME = case_when(
-    is_field == TRUE ~ handleFieldEvents(mark),
-    T ~ as.numeric(mark)
-  )
-  
-  return(mark)
-}
+# Status update
+print("Loading base data...")
 
 # Query data tables from AWS
-lines <- dbGetQuery(pg, "select * from runner_line_item_raw")
+lines <- dbGetQuery(pg, "select * from runner_line_item_raw") %>%
+  select(-c(meet_facility, meet_date, meet_track_size))
 
 # Query meet dates
 meet_dates <- dbGetQuery(pg, "select * from meet_dates") %>%
@@ -77,7 +62,7 @@ meet_dates <- dbGetQuery(pg, "select * from meet_dates") %>%
     meet_date = lubridate::ymd(meet_date),
     meet_name = trimws(meet_name)
   ) %>%
-  filter(year >= 2016) %>%
+  # filter(year >= 2016) %>%
   funique() %>%
   mutate(
     meet_name = tolower(meet_name)
@@ -99,16 +84,20 @@ lines <- lines %>%
 # Convert to a data table
 lines <- as.data.table(lines)
 
+# Split out data
 fieldLines <- lines %>%
   filter.(IS_FIELD == TRUE)
 
 runLines <- lines %>%
   filter.(IS_FIELD == FALSE)
 
+# Remove lines object to clear up memory
+rm(lines)
+
 # Convert marks
 fieldLines$MARK_TIME <- sapply(fieldLines$MARK_TIME, handleFieldEvents)
 
-# Clean up meet data
+# Extract elevation from track information
 # Subset altitude locations
 altitude_facilities <- meet_dates %>%
   filter(meet_track_size != "no location" & !grepl("timing", meet_track_size, ignore.case = TRUE)) %>%
@@ -133,8 +122,17 @@ altitude_facilities <- meet_dates %>%
       grepl("weber state", meet_facility, ignore.case = T) ~ "200m",
       grepl("idaho state", meet_facility, ignore.case = T) ~ "200m",
       grepl("texas tech", meet_facility, ignore.case = T) ~ "200m",
-      
-      T ~ "uncat"
+      grepl("western state", meet_facility, ignore.case = T) ~ "200m",
+      grepl("utah valley", meet_facility, ignore.case = T) ~ "400m",
+      grepl("montana - missoula", meet_facility, ignore.case = T) ~ "400m",
+      grepl("colorado st", meet_facility, ignore.case = T) ~ "400m",
+      grepl("northern colorado", meet_facility, ignore.case = T) ~ "400m",
+      grepl("utep", meet_facility, ignore.case = T) ~ "400m",
+      grepl("eastern new mexico", meet_facility, ignore.case = T) ~ "400m",
+      grepl("west texas a&m", meet_facility, ignore.case = T) ~ "400m",
+      grepl("csu-pueblo", meet_facility, ignore.case = T) ~ "400m",
+      grepl("laramie, wy", meet_facility, ignore.case = T) ~ "160m",
+      T ~ "400m"
     )
   ) %>%
   mutate(
@@ -149,8 +147,17 @@ altitude_facilities <- meet_dates %>%
       grepl("weber state", meet_facility, ignore.case = T) ~ "flat",
       grepl("idaho state", meet_facility, ignore.case = T) ~ "banked",
       grepl("texas tech", meet_facility, ignore.case = T) ~ "banked",
-      
-      T ~ "uncat"
+      grepl("western state", meet_facility, ignore.case = T) ~ "flat",
+      grepl("utah valley", meet_facility, ignore.case = T) ~ "flat",
+      grepl("montana - missoula", meet_facility, ignore.case = T) ~ "flat",
+      grepl("colorado st", meet_facility, ignore.case = T) ~ "flat",
+      grepl("northern colorado", meet_facility, ignore.case = T) ~ "flat",
+      grepl("utep", meet_facility, ignore.case = T) ~ "flat",
+      grepl("eastern new mexico", meet_facility, ignore.case = T) ~ "flat",
+      grepl("west texas a&m", meet_facility, ignore.case = T) ~ "flat",
+      grepl("csu-pueblo", meet_facility, ignore.case = T) ~ "flat",
+      grepl("laramie, wy", meet_facility, ignore.case = T) ~ "flat",
+      T ~ "flat"
     )
   )
 
@@ -165,28 +172,102 @@ facility_sizes <- meet_dates %>%
       grepl("bank", meet_track_size, ignore.case = TRUE) ~ "banked",
       T ~ "flat"
     ),
-    track_length = substr(meet_track_size, 1, 5)
+    track_length = substr(meet_track_size, 1, 5),
+    elevation = 0
   )
 
+# Combine data
+facs <- rbind(altitude_facilities, facility_sizes) %>%
+  mutate(
+    # Manually adjust some elevations
+    elevation = case_when(
+      grepl("alamosa", meet_facility, ignore.case = TRUE) ~ "7545",
+      grepl("air force", meet_facility, ignore.case = TRUE) ~ "6981",
+      grepl("appalachian state", meet_facility, ignore.case = TRUE) ~ "3333",
+      grepl("black hills st", meet_facility, ignore.case = TRUE) ~ "3593",
+      grepl("byu", meet_facility, ignore.case = TRUE) ~ "7545",
+      grepl("golden, co", meet_facility, ignore.case = TRUE) ~ "5675",
+      grepl("boulder, co", meet_facility, ignore.case = TRUE) ~ "5260",
+      grepl("pocatello, id", meet_facility, ignore.case = TRUE) ~ "4465",
+      grepl("bozeman, mt", meet_facility, ignore.case = TRUE) ~ "4926",
+      grepl("texas tech", meet_facility, ignore.case = TRUE) ~ "3281",
+      grepl("logan, ut", meet_facility, ignore.case = TRUE) ~ "4680",
+      grepl("ogden, ut", meet_facility, ignore.case = TRUE) ~ "4759",
+      grepl("laramie, wy", meet_facility, ignore.case = TRUE) ~ "7163",
+      T ~ elevation
+    )
+  ) %>%
+  select(-c(meet_track_size)) %>%
+  mutate(
+    elevation = trimws(elevation),
+    track_length = trimws(track_length),
+    banked_or_flat = trimws(banked_or_flat)
+  )
 
-
+# Conversion metrics for banked/oversize tracks
+# Join facility info
 runLines <- runLines %>%
   mutate.(
     MARK_TIME = as.numeric(MARK_TIME)
+  ) %>%
+  left_join.(
+    facs, by = c("meet_facility")
   )
+
+# Clean up facility fields
+runLines$elevation = ifelse(is.na(runLines$elevation), 0, runLines$elevation)
+runLines$track_length = ifelse(is.na(runLines$track_length), "400m", runLines$track_length)
+runLines$banked_or_flat = ifelse(is.na(runLines$banked_or_flat), "flat", runLines$banked_or_flat)
+
+# Create a field for joining track conversions on
+runLines <- runLines %>%
+  mutate.(
+    track_length = as.numeric(gsub("m", "", track_length))
+  ) %>%
+  mutate.(
+    track_size_conversion = case_when(
+      track_length < 200 & EVENT %in% c("800m", "Mile", "1500m", "3000m", "5000m", "400m", "DMR", "1000m", "600m", "500m") ~ "undersized",
+      track_length == 200 & banked_or_flat == "flat" & EVENT %in% c("800m", "Mile", "1500m", "3000m", "5000m", "400m", "DMR", "1000m", "600m", "500m", "200m", "300m") ~ "flat",
+      T ~ "none"
+    )
+  ) %>%
+  mutate.(
+    elevation = as.numeric(elevation)
+  )
+
+# Generate altitude converted mark
+runLines$altConvMark = mapply(getConv, alt = runLines$elevation, event = runLines$EVENT, mark = runLines$MARK_TIME)
+
+# Generate track size converted mark
+# Join track size fields for conversion
+runLines <- runLines %>%
+  left_join.(
+    trckSz, by = c("EVENT" = "event", "GENDER" = "gender", "track_size_conversion" = "type")
+  )
+
+# Create final converted mark (alt + track)
+runLines$conversion = ifelse(is.na(runLines$conversion), 1, runLines$conversion)
+runLines <- runLines %>%
+  mutate.(
+    converted_time = conversion * altConvMark
+  )
+
 
 # Create calendar data
 cal <- genCal()
+
+# Status update
+print("Running rolling mark updates...")
 
 # Rewriting code but for tidytable
 linesRunner <- runLines %>%
   arrange.(NAME, GENDER, TEAM, DIVISION, EVENT, meet_date) %>%
   mutate.(
-    MARK_SHIFT = lag(MARK_TIME) - MARK_TIME,
+    MARK_SHIFT = lag(converted_time) - converted_time,
     PLACE_SHIFT = lag(PLACE) - PLACE,
     DAYS_BTWN = meet_date - lag(meet_date),
-    C.PR = cummin(MARK_TIME), # Cumulative PR
-    R.MARK = zoo::rollmean(MARK_TIME, k = 2, fill = NA, align = "right"), 
+    C.PR = cummin(converted_time), # Cumulative PR
+    R.MARK = zoo::rollmean(converted_time, k = 2, fill = NA, align = "right"), 
     R.PLACE = zoo::rollmean(PLACE, k = 2, fill = NA, align = "right"),
     .by = c(NAME, GENDER, TEAM, DIVISION, EVENT)
   ) %>%
@@ -229,7 +310,7 @@ linesField <- fieldLines %>%
   )
 
 # Bind data together
-lines <- rbind(linesField, linesRunner)
+lines <- plyr::rbind.fill(linesField, linesRunner)
 
 # Filter out bad data
 rl <- lines %>%
@@ -254,6 +335,10 @@ rl <- lines %>%
 # Additionally, adjusting year for grouping data for YOY purposes
 rl <- setDF(rl)
 
+# Status update
+print("Calculating PR shift data...")
+
+# Calculate PR data
 rl <- rl %>%
   mutate(
     is_pr = case_when(
@@ -278,4 +363,11 @@ rl <- rl %>%
 
 # Join calendar info
 rl <- rl %>%
-  left_join.(cal, by = c("meet_date" = "cal_d"))
+  left_join(cal, by = c("meet_date" = "cal_d"))
+
+# Status update
+print("Uploading to table...")
+
+# Write to table
+dbCreateTable(pg, "runner_lines_details", rl)
+dbWriteTable(pg, "runner_lines_details", rl, overwrite = TRUE)

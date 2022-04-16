@@ -1,7 +1,7 @@
-# RUN THIS FOR TRACK MEET SCRAPING
-# Code to generate line item performances from TFRRS in non-parallel process.
-# Code uses the TF meet scraping function to get runner links. Identical code for
-# XC can be found in the nonParXCScrapeR.R file
+# RUN THIS FOR TRACK MEET SCRAPING IN PARALLEL
+# Code to generate line item performances from TFRRS in parallel process.
+
+# Load libraries
 library(tidymodels)
 library(httr)
 library(dplyr)
@@ -19,7 +19,7 @@ library(RCurl)
 # Load functions for scraping
 source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
 
-# Connect to AWS
+# Connect to postgres
 # Read connection data from yaml
 pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
 
