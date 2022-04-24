@@ -1084,12 +1084,13 @@ runnerScrapeV2 <- function(url){
       if (is.null(years) | is.null(events) | is.null(marks) | is.null(places) | is.null(race_names) | is.null(dates) | is.null(prelims)) {
         # Print error message
         print(paste0("Error getting data for: ", runner_name))
-        # Set to empty, default values
-        athlete <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division", FALSE, "1"))
-        # Rename columns
-        names(athlete) = c("YEAR", "EVENT", "MARK", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION", "IS_FIELD", "MARK_TIME")
-        # Return
-        return(athlete)
+        # # Set to empty, default values
+        # athlete <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division", FALSE, "1"))
+        # # Rename columns
+        # names(athlete) = c("YEAR", "EVENT", "MARK", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION", "IS_FIELD", "MARK_TIME")
+        # # Return
+        # return(athlete)
+        return(NA)
       } else {
         # Create a data frame
         athlete <- as.data.frame(cbind(years, events, marks, places, race_names, dates, prelims))
@@ -1152,12 +1153,13 @@ runnerScrapeV2 <- function(url){
 
         # Check to see if data was nullified
         if (nrow(athlete) == 0) {
-          # Set to empty, default values
-          athlete <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division", FALSE, "1"))
-          # Rename columns
-          names(athlete) = c("YEAR", "EVENT", "MARK", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION", "IS_FIELD", "MARK_TIME")
-          # Return
-          return(athlete)
+          # # Set to empty, default values
+          # athlete <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division", FALSE, "1"))
+          # # Rename columns
+          # names(athlete) = c("YEAR", "EVENT", "MARK", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION", "IS_FIELD", "MARK_TIME")
+          # # Return
+          # return(athlete)
+          return(NA)
         }
 
         # Apply function to convert times to numbers
@@ -1197,6 +1199,7 @@ runnerScrapeV2 <- function(url){
     },
     error=function(cond) {
     # Choose a return value in case of error
+    print(paste0("Error getting data for: ", url))
     return(NA)
   })
 

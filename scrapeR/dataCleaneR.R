@@ -369,5 +369,5 @@ rl <- rl %>%
 print("Uploading to table...")
 
 # Write to table
-dbCreateTable(pg, "runner_lines_details", rl)
+# dbCreateTable(pg, "runner_lines_details", rl)
 dbWriteTable(pg, "runner_lines_details", rl, overwrite = TRUE)

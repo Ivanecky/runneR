@@ -15,6 +15,8 @@ library(yaml)
 library(rvest)
 library(kit)
 library(RCurl)
+library(doParallel)
+library(lme4)
 
 # Load functions for scraping
 source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
@@ -95,26 +97,26 @@ for (i in 1:(length(joinLinks))) {
   
   # Get runner URLs
   tryCatch({
-        # Get runner
-        tempRunnerLinks <- getIndoorRunnerURLs(joinLinks[i])
-        # Return value
-        return(tempRunnerLinks)
-      },  
-      error=function(cond) {
-        tryCatch({
-          # Get runner
-          tempRunnerLinks <- getXCRunnerURLs(joinLinks[i])
-          # Return value
-          return(tempRunnerLinks)
-        },  
-        error=function(cond) {
-          message("Here's the original error message:")
-          message(cond)
-          meetErrLinks <- append(meetErrLinks, joinLinks[i])
-          # Sys.sleep(60)
-          return(NA)
-        })
-      })
+    # Get runner
+    tempRunnerLinks <- getIndoorRunnerURLs(joinLinks[i])
+    # Return value
+    return(tempRunnerLinks)
+  },  
+  error=function(cond) {
+    tryCatch({
+      # Get runner
+      tempRunnerLinks <- getXCRunnerURLs(joinLinks[i])
+      # Return value
+      return(tempRunnerLinks)
+    },  
+    error=function(cond) {
+      message("Here's the original error message:")
+      message(cond)
+      meetErrLinks <- append(meetErrLinks, joinLinks[i])
+      # Sys.sleep(60)
+      return(NA)
+    })
+  })
   
   # Bind runners 
   runnerLinks <- append(runnerLinks, tempRunnerLinks)
@@ -125,21 +127,8 @@ for (i in 1:(length(joinLinks))) {
 runnerLinks <- funique(runnerLinks)
 
 # Get runner data
-# Error links
-errorLinks <- vector()
-
-# Query data in parallel
-runner_lines <- runnerResQuery(runnerLinks)
-
-# Reconnect to data
-# Connect to database
-pg <- dbConnect(
-  RPostgres::Postgres(),
-  host = pg.yml$host,
-  user = pg.yml$user,
-  db = pg.yml$database,
-  port = pg.yml$port
-)
+# Run code in parallel
+runner_lines_res <- runnerResQueryV2(runnerLinks)
 
 
 # Upload to AWS database
@@ -150,7 +139,7 @@ currentData <- dbGetQuery(pg, "select * from runner_line_item_raw") %>%
   ) 
 
 # Modifying data before loading
-runRecs <- runner_lines %>%
+runRecs <- runner_lines_res %>%
   as.data.frame() %>%
   filter(MEET_NAME != "meet") %>%
   funique() %>%

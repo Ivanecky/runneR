@@ -35,7 +35,7 @@ pg <- dbConnect(
   port = pg.yml$port
 )
 
-# Performance list links
+# # Performance list links
 plLinks <- c("https://www.tfrrs.org/lists/2770/2019_2020_NCAA_Div._I_Indoor_Qualifying_(FINAL)/2020/i",
                "https://www.tfrrs.org/lists/2771/2019_2020_NCAA_Div._II_Indoor_Qualifying_(FINAL)",
                "https://www.tfrrs.org/lists/2772/2019_2020_NCAA_Div._III_Indoor_Qualifying_(FINAL)/2020/i",
@@ -64,7 +64,15 @@ plLinks <- c("https://www.tfrrs.org/lists/2770/2019_2020_NCAA_Div._I_Indoor_Qual
                "https://www.tfrrs.org/lists/3157/2020_2021_NCAA_Div._I_Indoor_Qualifying_(FINAL)/2021/i",
                "https://www.tfrrs.org/lists/3158/2020_2021_NCAA_Div._II_Indoor_Qualifying_(FINAL)",
                "https://www.tfrrs.org/lists/3161/2020_2021_NCAA_Division_III_Indoor_Qualifying_List/2021/i",
-               "https://www.tfrrs.org/lists/3156/2020_2021_NAIA_Indoor_Qualifying_(FINAL)/2021/i")
+               "https://www.tfrrs.org/lists/3156/2020_2021_NAIA_Indoor_Qualifying_(FINAL)/2021/i",
+                "https://www.tfrrs.org/lists/3711/2022_NCAA_Division_I_Outdoor_Qualifying_List/2022/o",
+                "https://www.tfrrs.org/lists/3595/2022_NCAA_Division_II_Outdoor_Qualifying_List",
+                "https://www.tfrrs.org/lists/3714/2022_NCAA_Division_III_Outdoor_Qualifying_List/2022/o",
+                "https://www.tfrrs.org/lists/3596/2022_NAIA_Outdoor_Qualifying_List",
+                "https://www.tfrrs.org/lists/3495/2021_2022_NAIA_Indoor_Qualifying_(FINAL)",
+                "https://www.tfrrs.org/lists/3492/2021_2022_NCAA_Div._I_Indoor_Qualifying_(FINAL)/2022/i",
+                "https://www.tfrrs.org/lists/3493/2021_2022_NCAA_Div._II_Indoor_Qualifying_(FINAL)",
+                "https://www.tfrrs.org/lists/3494/2021_2022_NCAA_Div._III_Indoor_Qualifying_(FINAL)/2022/i")
 
 plMeetLinks <- vector()
 
@@ -79,7 +87,7 @@ for (i in 1:length(plLinks)) {
 }
 
 # Remove duplicate links
-plMeetLinks <- funique(plMeetLinks)
+# plMeetLinks <- funique(plMeetLinks)
 
 meetLinks <- dbGetQuery(pg, "select * from meet_links")
 
@@ -93,8 +101,12 @@ meetLinks <- append(meetLinks, plMeetLinks)
 currentLinks <- getMeetLinks()
 meetLinks <- append(meetLinks, currentLinks)
 
+# Remove dups
+meetLinks <- funique(meetLinks)
+
 # Clean out links that are event specific
-meetLinks <- meetLinks[!(grepl("_Jump|_Vault|meteres|Meters|_Relay|Hurdles|_Throw|Mile|Pentathlon|Heptathlon|Shot_Put|Discus|Hammer|Javelin|Decathlon|Steeplechase", meetLinks, ignore.case = TRUE))]
+meetLinks <- meetLinks[!(grepl("_Jump|_Vault|meteres|Meters|Hurdles|_Throw|Mile|Pentathlon|Heptathlon|Shot_Put|Discus|Hammer|Javelin|Decathlon|Steeplechase", meetLinks, ignore.case = TRUE))]
+meetLinks <- meetLinks[!(grepl("_Relay", meetLinks, ignore.case = TRUE) & !grepl("_Relays", meetLinks, ignore.case = TRUE))]
 
 # Vectors to hold info
 meetNames <- vector()
@@ -114,7 +126,7 @@ for (i in 1:length(meetLinks)) {
   if(class(try(tempUrl %>%
                GET(., timeout(30), user_agent(randUsrAgnt())) %>%
                read_html())) == 'try-error') {
-    print(paste0("Failed to get data for : ", tempUrl))
+    print(paste0("Failed to get data for : ", tempUrl)) 
     errorLinks <- append(errorLinks, tempUrl)
     next
   }
@@ -212,4 +224,4 @@ meets <- meets %>%
 # Upload to a table
 dbRemoveTable(pg, "meet_dates")
 dbCreateTable(pg, "meet_dates", meets)
-dbWriteTable(pg, "meet_dates", meets, append = TRUE)
+dbWriteTable(pg, "meet_dates", meets, overwrite = TRUE)

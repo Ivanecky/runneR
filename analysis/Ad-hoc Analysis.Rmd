@@ -8,7 +8,7 @@ output: html_document
 # Setup
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_chunk$set(fig.width=14, fig.height=9) 
+knitr::opts_chunk$set(fig.width=18, fig.height=10) 
 
 # Code to generate line item performances from TFRRS.
 library(tidymodels)
@@ -28,25 +28,25 @@ library(ggridges)
 library(ggrepel)
 library(zoo)
 library(dplyr)
-library(teamcolors)
 library(gt)
-
-# Connect to AWS
-# Read connection data from yaml
-pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
+library(data.table)
+library(tidytable)
 
 # Source file for functions
 source("/Users/samivanecky/git/runneR/scrapeR/Scraping_Fxns.R")
 source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
 
+# Read connection data from yaml
+pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
+
 # Connect to database
-# aws <- dbConnect(
-#   RPostgres::Postgres(),
-#   host = aws.yml$host,
-#   user = aws.yml$user,
-#   password = aws.yml$password,
-#   port = aws.yml$port
-# )
+pg <- dbConnect(
+  RPostgres::Postgres(),
+  host = pg.yml$host,
+  user = pg.yml$user,
+  db = pg.yml$database,
+  port = pg.yml$port
+)
 
 reformatTimes <- function(mark) {
   sec <- str_pad((mark %% 60), width = 2, side = "left", pad = "0")
@@ -60,28 +60,56 @@ reformatTimes <- function(mark) {
 ## Run Script to Load Data, Query Data
 ```{r echo=TRUE}
 source("/Users/samivanecky/git/runneR/scrapeR/dataCleaneR.R")
+
+# Remove extra data
+rm(runLines)
+rm(linesRunner)
+rm(linesField)
+rm(lines)
+```
+
+## Query
+### Overall Data
+```{r}
+rl <- dbGetQuery(pg, "select * from runner_lines_details")
+```
+
+### Aggregate Divisions
+```{r warning=FALSE}
+teams <- rl %>%
+  select(TEAM, DIVISION) %>%
+  funique() %>%
+  filter(DIVISION != "OTHER")
 ```
 
 ## Recreate Grouped Yearly Data Using Competition Year
 ```{r warning=FALSE}
-grpYrly <- rl %>%
-  filter(IS_FIELD == FALSE) %>%
-  ungroup() %>%
-  group_by(NAME, TEAM, GENDER, DIVISION, EVENT, EVENT_TYPE, competition_year) %>%
-  summarise(
+# Convert to data.table for faster manipulation
+rlDT <- data.table::setDT(rl)
+
+# Create all-time grouped data
+grpYrly <- rlDT %>%
+  filter.(IS_FIELD == FALSE) %>%
+  summarize.(
     pr = min(converted_time, na.rm = T),
     prs_run = sum(is_pr, na.rm = T),
     avg_time = round(mean(converted_time, na.rm = T), 2),
     times_run = n_distinct(MEET_NAME),
     avg_place = round(mean(PLACE, na.rm = T), 2),
-    wins = n_distinct(MEET_NAME[PLACE == 1])
+    wins = n_distinct(MEET_NAME[PLACE == 1]),
+    .by = c(NAME, TEAM, GENDER, EVENT, competition_year)
   ) %>%
-  rowwise() %>%
-  mutate(
-    clean_pr = reformatTimes(floor(pr)),
-    clean_avg_time = reformatTimes(floor(avg_time)),
+  mutate.(
     win_pct = round((wins / times_run) * 100, 3)
   )
+
+# Rowwise operations
+grpYrly$clean_pr = sapply(grpYrly$pr, reformatTimes)
+grpYrly$clean_avg_time = sapply(grpYrly$avg_time, reformatTimes)
+
+# Convert back to dataframe
+grpYrly <- as.data.frame(grpYrly)
+
 ```
 
 ## Strength Of Competition
@@ -241,27 +269,62 @@ raceGrpYrly <- raceDets %>%
 ```
 
 ## Pivot Out Personal Best Data
-```{r}
+```{r warning=FALSE}
+# Create all-time grouped data
+grpAllTime <- rl %>%
+  filter.(IS_FIELD == FALSE) %>%
+  summarize.(
+    pr = min(converted_time, na.rm = T),
+    prs_run = sum(is_pr, na.rm = T),
+    avg_time = round(mean(converted_time, na.rm = T), 2),
+    times_run = n_distinct(MEET_NAME),
+    avg_place = round(mean(PLACE, na.rm = T), 2),
+    wins = n_distinct(MEET_NAME[PLACE == 1]),
+    .by = c(NAME, TEAM, GENDER, EVENT)
+  ) %>%
+  mutate.(
+    win_pct = round((wins / times_run) * 100, 3)
+  )
+
+# Rowwise operations
+grpAllTime$clean_pr = sapply(grpAllTime$pr, reformatTimes)
+grpAllTime$clean_avg_time = sapply(grpAllTime$avg_time, reformatTimes)
+
+# Convert back to dataframe
+grpAllTime <- as.data.frame(grpAllTime)
+
+# Create PR df via pivot approach
 prDf <- grpAllTime %>%
   pivot_wider(
     id_cols = c(NAME, GENDER, TEAM),
     names_from = EVENT,
-    values_from = c(AVG_TIME, PR, TIMES.RUN)
-  ) %>%
-  right_join(names, by = c("NAME", "TEAM", "GENDER"))
+    values_from = c(avg_time, pr, times_run)
+  ) 
+
+# Pivot out current year
+prDf22 <- grpYrly %>%
+  filter(competition_year == "2022") %>%
+  pivot_wider(
+    id_cols = c(NAME, GENDER, TEAM),
+    names_from = EVENT,
+    values_from = c(avg_time, pr, times_run)
+  ) 
+  # right_join(names, by = c("NAME", "TEAM", "GENDER"))
 ```
 
 # Join Divisions to All Time Grouping
 ```{r}
-divNames <- lines %>%
-  ungroup() %>%
-  select(NAME, GENDER, TEAM, DIVISION) %>%
-  funique()
+divNames <- rlDT %>%
+  select.(NAME, GENDER, TEAM) %>%
+  funique() %>%
+  left_join.(teams, by = c("TEAM"))
 
 # Join
-grpAllTime <- grpAllTime %>%
-  left_join(divNames, by = c("NAME", "GENDER", "TEAM")) %>%
-  funique()
+prDf <- prDf %>%
+  left_join(divNames, by = c("NAME", "GENDER", "TEAM"))
+
+prDf22 <- prDf22 %>%
+  left_join(divNames, by = c("NAME", "GENDER", "TEAM"))
 ```
 
 # Model Attempt
@@ -269,77 +332,183 @@ grpAllTime <- grpAllTime %>%
 ```{r}
 # All-time
 wDf <- prDf %>%
-  filter(GENDER == "F" & DIVISION == "D1") %>%
+  filter(GENDER == "F") %>%
   select(
-    NAME, DIVISION, AVG_TIME_3000m, AVG_TIME_5000m, AVG_TIME_1500m, AVG_TIME_Mile,
-    PR_800m, PR_1500m, PR_Mile, PR_3000m, PR_5000m
+    NAME, DIVISION, avg_time_3000m, avg_time_5000m, avg_time_1500m, avg_time_Mile,
+    pr_800m, pr_1500m, pr_Mile, pr_3000m, pr_5000m, pr_3000S
   )
 ```
 
 # Visuals
-## 3k Improvement
+## 3k vs 5k
 ```{r}
 wDf %>%
-  filter(PR_3000m <= 600) %>%
-  ggplot(aes(PR_3000m, PR_5000m, colour = DIVISION)) +
-  geom_point() +
-  geom_smooth(method='lm', formula= y~x) +
-  scale_x_continuous(name = "Personal Best",
-                     breaks = c(530, 540, 550, 560, 570, 580, 590, 600),
-                     labels = c("8:50", "9:00", "9:10", "9:20", "9:30", "9:40", "9:50", "10:00")) +
-  scale_y_continuous(name = "Personal Best",
-                     breaks = c(900, 945, 990, 1035, 1080, 1125, 1170),
-                     labels = c("15:00", "15:45", "16:30", "17:15", "18:00", "18:45", "19:30")) +
-  geom_label_repel(aes(label = NAME), max.overlaps = 10) +
+  filter(pr_3000m <= 650 & pr_3000S <= 660) %>%
+  filter(DIVISION %in% c("D1", "D2", "D3", "NAIA")) %>%
+  ggplot(aes(pr_3000m, pr_3000S, colour = DIVISION)) +
+  geom_point(size = 5) +
+  # geom_smooth(method='lm', formula= y~x) +
+  scale_x_continuous(name = "Personal Best (3k)",
+                     breaks = c(530, 540, 550, 560, 570, 580, 590, 600, 610, 620, 630, 640),
+                     labels = c("8:50", "", "9:10", "", "9:30", "", "9:50", "", "10:10", "", "10:30", "")) +
+  scale_y_continuous(name = "Personal Best (3k Steeple)",
+                   breaks = c(550, 560, 570, 580, 590, 600, 610, 620, 630, 640, 650),
+                   labels = c("9:10", "", "9:30", "", "9:50", "", "10:10", "", "10:30", "", "10:50")) +
+  geom_label_repel(aes(label = NAME), max.overlaps = 5, size = 5) +
   ggplot2::labs(
     x = "PR 3k",
-    y = "PR 5k",
-    caption = "",
-    title = "D1 Women 3k vs 5k PRs",
-    subtitle = ""
+    y = "PR Steeple",
+    caption = "Data shown for indoor & outdoor track seasons for recent NCAA seasons.",
+    title = "NCAA Women 3k vs Steeplchase Performances",
+    subtitle = "Minimum 10:50 in 3k and 11:00 in steeple."
   ) +
   ggplot2::theme_minimal() +
   ggplot2::theme(
-    plot.title = ggplot2::element_text(face = "bold"),
-    plot.title.position = "panel",
-    text = element_text(size=20),
-    #axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
-    legend.position = "none"
-  )
+    aspect.ratio = 9 / 16,
+    legend.position = "none",
+    axis.text.x = element_text(face = "italic"),
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 50, hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    text = element_text(size=30, face = "bold"),
+  ) +
+  facet_wrap(DIVISION ~ .)
+```
+
+## 2022
+### 3k vs 5k in 2022
+```{r}
+prDf22 %>%
+  filter(GENDER == "F") %>%
+  filter(pr_3000m <= 600) %>%
+  ggplot(aes(pr_3000m, pr_5000m, colour = DIVISION)) +
+  geom_point(size = 5) +
+  # geom_smooth(method='lm', formula= y~x) +
+  scale_x_continuous(name = "Personal Best (3k)",
+                     breaks = c(530, 540, 550, 560, 570, 580, 590, 600),
+                     labels = c("8:50", "9:00", "9:10", "9:20", "9:30", "9:40", "9:50", "10:00")) +
+  scale_y_continuous(name = "Personal Best (5k)",
+                     breaks = c(900, 945, 990, 1035, 1080, 1125, 1170),
+                     labels = c("15:00", "15:45", "16:30", "17:15", "18:00", "18:45", "19:30")) +
+  geom_label_repel(aes(label = NAME), max.overlaps = 5, size = 5) +
+  ggplot2::labs(
+    x = "PR 3k",
+    y = "PR 5k",
+    caption = "Data shown for the 2021-2022 indoor & outdoor track seasons.",
+    title = "NCAA Women 3k vs 5k Performances in 2022",
+    subtitle = "Showing women with 3K PRs of 10:00 or better."
+  ) +
+  ggplot2::theme_minimal() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    legend.position = "none",
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 50, hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    text = element_text(size=30, face = "bold"),
+  ) +
+  facet_wrap(DIVISION ~ .)
+```
+
+### 3k vs Mile
+```{r}
+prDf22 %>%
+  filter(GENDER == "F") %>%
+  filter(pr_3000m <= 650 & pr_3000S <= 660) %>%
+  #filter(DIVISION %in% c("D1", "D2", "D3")) %>%
+  ggplot(aes(pr_3000m, pr_3000S, colour = DIVISION)) +
+  geom_point(size = 5) +
+  # geom_smooth(method='lm', formula= y~x) +
+  scale_x_continuous(name = "Personal Best (3k)",
+                     breaks = c(530, 540, 550, 560, 570, 580, 590, 600, 610, 620, 630, 640),
+                     labels = c("8:50", "", "9:10", "", "9:30", "", "9:50", "", "10:10", "", "10:30", "")) +
+  scale_y_continuous(name = "Personal Best (3k Steeple)",
+                   breaks = c(550, 560, 570, 580, 590, 600, 610, 620, 630, 640, 650),
+                   labels = c("9:10", "", "9:30", "", "9:50", "", "10:10", "", "10:30", "", "10:50")) +
+  geom_label_repel(aes(label = NAME), max.overlaps = 5, size = 5) +
+  ggplot2::labs(
+    x = "PR 3k",
+    y = "PR Steeple",
+    caption = "Data shown for the 2021-2022 indoor & outdoor track seasons.",
+    title = "NCAA Women 3k vs Steeplchase Performances in 2022",
+    subtitle = "Minimum 10:50 in 3k and 11:00 in steeple."
+  ) +
+  ggplot2::theme_minimal() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    legend.position = "none",
+    axis.text.x = element_text(face = "italic"),
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 50, hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    text = element_text(size=30, face = "bold"),
+  ) +
+  facet_wrap(DIVISION ~ .)
 ```
 
 ## 800 v Mile
 ```{r}
 wDf %>%
-  filter(PR_Mile <= 300 & PR_800m <= 160) %>%
-  ggplot(aes(PR_800m, PR_Mile)) +
+  filter(pr_Mile <= 300 & pr_800m <= 160) %>%
+  filter(DIVISION != "OTHER") %>%
+  ggplot(aes(pr_Mile, pr_800m, colour = DIVISION)) +
   geom_point() +
-  geom_smooth(method='lm', formula= y~x) +
-  scale_x_continuous(name = "Personal Best",
+  scale_y_continuous(name = "Personal Best (800m)",
                      breaks = c(115, 120, 125, 130, 135, 140, 145, 150, 155, 160),
                      labels = c("1:55", "2:00", "2:05", "2:10", "2:15", "2:20", "2:25", "2:30", "2:35", "2:40")) +
-  scale_y_continuous(name = "Personal Best",
+  scale_x_continuous(name = "Personal Best (Mile)",
                      breaks = c(255, 265, 275, 285, 295, 305),
                      labels = c("4:15", "4:25", "4:35", "4:45", "4:55", "5:05")) +
-  geom_label_repel(aes(label = NAME), max.overlaps = 10, colour = "blue") +
+  geom_label_repel(aes(label = NAME), max.overlaps = 10) +
   ggplot2::labs(
     x = "PR 800",
     y = "PR Mile",
-    caption = "",
-    title = "D1 Women 800 vs Mile PRs",
-    subtitle = "Minimum 5:00 mile."
+    caption = "Data broken out by competition division.",
+    title = "NCAA Women 800 vs Mile PRs",
+    subtitle = "Minimum 5:00 mile & 2:40 800m."
   ) +
   ggplot2::theme_minimal() +
   ggplot2::theme(
     aspect.ratio = 9 / 16,
-    plot.title = ggplot2::element_text(face = "bold"),
-    plot.title.position = "panel",
-    text = element_text(size=20),
-    #axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
-    legend.position = "none"
-  )
+    legend.position = "none",
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 25, hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    text = element_text(size=12, face = "bold"),
+  ) +
+  facet_wrap(DIVISION ~ .)
 ```
 
+## 5k vs Mile
+```{r}
+wDf %>%
+  filter(pr_Mile <= 330 & pr_5000m <= 1170) %>%
+  ggplot(aes(pr_Mile, pr_5000m, colour = DIVISION)) +
+  geom_point(size = 3) +
+  # geom_smooth(method='lm', formula= y~x) +
+  scale_x_continuous(name = "Personal Best (Mile)",
+                     breaks = c(255, 265, 275, 285, 295, 305, 315, 325),
+                     labels = c("4:15", "4:25", "4:35", "4:45", "4:55", "5:05", "5:15", "5:25")) +
+  scale_y_continuous(name = "Personal Best (5k)",
+                     breaks = c(900, 945, 990, 1035, 1080, 1125, 1170),
+                     labels = c("15:00", "15:45", "16:30", "17:15", "18:00", "18:45", "19:30")) +
+  geom_label_repel(aes(label = NAME), max.overlaps = 10) +
+  ggplot2::labs(
+    caption = "",
+    title = "NCAA Women Mile vs 5k PRs",
+    subtitle = "Showing women with 3K PRs of 10:00 or better."
+  ) +
+  ggplot2::theme_minimal() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    legend.position = "none",
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 25, hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    text = element_text(size=12, face = "bold"),
+  ) +
+  facet_wrap(DIVISION ~ .)
+```
 
 ## 5k Improvement
 ```{r}
@@ -367,6 +536,32 @@ prDf %>%
   geom_point() +
   stat_smooth() +
   geom_label_repel(aes(label = NAME), max.overlaps = 100)
+```
+
+## Overall Grouped Data
+```{r}
+grpYrly %>%
+  filter(GENDER == "F" & competition_year == "2022") %>%
+  ggplot(aes(pr, avg_time, colour = DIVISION)) +
+  geom_point(size = 3) +
+  # geom_smooth(method='lm', formula= y~x) 
+  geom_label_repel(aes(label = NAME), max.overlaps = 10) +
+  ggplot2::labs(
+    x = "PR 3k",
+    y = "PR 5k",
+    caption = "",
+    title = "NCAA Women 3k vs 5k PRs",
+    subtitle = "Showing women with 3K PRs of 10:00 or better."
+  ) +
+  ggplot2::theme_minimal() +
+  ggplot2::theme(
+    plot.title = ggplot2::element_text(face = "bold"),
+    plot.title.position = "panel",
+    text = element_text(size=20),
+    #axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1),
+    legend.position = "none"
+  ) +
+  facet_wrap(DIVISION ~ .)
 ```
 
 # 6k XC Wins

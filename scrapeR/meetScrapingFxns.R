@@ -104,12 +104,60 @@ getRunner <- function(url) {
   runner <- tryCatch(
     {
       tempRunner <- runnerScrapeV2(url)
-      return(tempRunner)
+      
+      # Verify result is a data frame
+      if(is.data.frame(tempRunner)) {
+        return(tempRunner)
+      } else {
+        return(NA)
+      }
+      
     },
     # Error and warning handling
     error = function(cond) {
       # Choose a return value in case of error
+      print(paste0("Error getting data for: ", url))
       return(NA)
+    }
+  )
+}
+
+# Parallel get runner
+getParRunner <- function(url) {
+  runner <- tryCatch(
+    {
+      # Get runner data
+      tempRunner <- runnerScrapeV2(url)
+      
+      # Add upload date
+      tempRunner$load_d = lubridate::today()
+      
+      # Connect to database
+      pg <- dbConnect(
+        RPostgres::Postgres(),
+        host = 'localhost',
+        user = 'samivanecky',
+        db = 'runner',
+        port = 5432
+      )
+      
+      # Upload to postgres
+      dbWriteTable(pg, "runner_lines_stg", tempRunner, append = TRUE)
+      
+      # Create string
+      retVal <- paste0("SUCCESS: ", url)
+      
+      # Return value to hold in list
+      return(retVal)
+    },
+    # Error and warning handling
+    error = function(cond) {
+      # Choose a return value in case of error
+      print(paste0("Error getting data for: ", url))
+      # Set return value
+      retVal <- paste0("ERROR: ", url)
+      # Return URL of runner with error
+      return(retVal)
     }
   )
 }
@@ -293,7 +341,7 @@ runnerResQuery <- function(runnerLinks) {
   cl <- makeCluster(cores[1] - 1, outfile = '/Users/samivanecky/git/runneR/scrapeR/scraperErrors.txt')
   registerDoParallel(cl)
   
-  runner_lines <- foreach(i=1:length(runnerLinks), .combine = plyr::rbind.fill, .errorhandling = "pass", .verbose = TRUE) %dopar% {
+  runner_lines <- foreach(i=1:length(runnerLinks), .combine = plyr::rbind.fill, .errorhandling = "remove", .verbose = TRUE, .inorder = FALSE, .init = runner_lines) %dopar% {
     
     source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
     
@@ -310,6 +358,64 @@ runnerResQuery <- function(runnerLinks) {
       return(NA)
     }
     )
+  }
+  
+  stopCluster(cl)
+  
+  # Return data
+  return(runner_lines)
+}
+
+# Indoor meet results query
+runnerResQueryV2 <- function(runnerLinks) {
+  
+  # # Create a temporary dataframe for runner line item performance
+  # runner_lines_res <- as.data.frame(cbind("result"))
+  # # Rename columns
+  # names(runner_lines_res) <- c("RESULT")
+  
+  # Create a temporary dataframe for runner line item performance
+  runner_lines <- as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division", FALSE, "1"))
+  # Rename columns
+  names(runner_lines) <- c("YEAR", "EVENT", "MARK", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION", "IS_FIELD", "MARK_TIME")
+  # Reformat var
+  runner_lines <- runner_lines %>%
+    mutate(
+      YEAR = as.character(YEAR),
+      EVENT = as.character(EVENT),
+      PLACE = as.numeric(PLACE),
+      NAME = as.character(NAME),
+      GENDER = as.character(GENDER),
+      TEAM = as.character(TEAM)
+    )
+  
+  # Detect cores
+  cores <- detectCores()
+  cl <- makeCluster(cores[1], outfile = '/Users/samivanecky/git/runneR/scrapeR/scraperErrors.txt')
+  registerDoParallel(cl)
+  
+  runner_lines <- foreach(i=1:length(runnerLinks), .combine = rbind, .errorhandling = "remove", .verbose = TRUE, .inorder = FALSE, .init = runner_lines) %dopar% {
+    
+    source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
+    
+    # # Call parallel code
+    # tempRunner <- getParRunner(runnerLinks[i])
+    # 
+    # # Convert to dataframe
+    # tempRunner <- as.data.frame(tempRunner)
+    # 
+    # # Rename
+    # names(tempRunner) <- c("RESULT")
+    # 
+    # # Return value
+    # return(tempRunner)
+    
+    # Get runner
+    tempRunner <- getRunner(runnerLinks[i])
+    
+    # Return value
+    return(tempRunner)
+    
   }
   
   stopCluster(cl)
