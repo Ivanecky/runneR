@@ -486,3 +486,47 @@ genCal <- function(startDate = "2012-01-01") {
   # Return
   return(cal)
 }
+
+# Function to get meet runner URLs in parallel
+getParRunnerURLs <- function(meetLinks) {
+  
+  # Detect cores
+  cores <- detectCores()
+  cl <- makeCluster(cores[1]-1, outfile = '/Users/samivanecky/git/runneR/scrapeR/scraperErrors.txt', methods = FALSE, type = "FORK")
+  registerDoParallel(cl)
+  
+  runnerLinks <- foreach(i=1:length(meetLinks), .combine = c, .errorhandling = "remove", .verbose = TRUE, .inorder = FALSE) %dopar% {
+    
+    source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
+    
+    # Print message for meet
+    print(paste0("Getting data for ", i, " out of ", length(meetLinks)))
+    
+    # Get runner URLs
+    tryCatch({
+      # Get runner
+      tempRunnerLinks <- getIndoorRunnerURLs(meetLinks[i])
+      # Return value
+      return(tempRunnerLinks)
+    },  
+    error=function(cond) {
+      tryCatch({
+        # Get runner
+        tempRunnerLinks <- getXCRunnerURLs(meetLinks[i])
+        # Return value
+        return(tempRunnerLinks)
+      },  
+      error=function(cond) {
+        # Sys.sleep(60)
+        return(NA)
+      })
+    })
+    
+  }
+  
+  # Stop cluster
+  stopCluster(cl)
+  
+  # Return data
+  return(runnerLinks)
+}
