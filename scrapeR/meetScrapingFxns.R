@@ -74,7 +74,7 @@ getPLMeetLinks <- function(url) {
   
   # Get runner links
   meets <- url %>%
-    GET(., timeout(30)) %>%
+    GET(., timeout(30), user_agent(randUsrAgnt())) %>%
     read_html() %>%
     html_nodes(xpath = "//tr/td/a") %>%
     html_attr("href")

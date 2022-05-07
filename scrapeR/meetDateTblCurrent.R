@@ -62,12 +62,12 @@ meetTrkSz <- vector()
 errorLinks <- vector()
 
 # Iterate over meets
-for (i in 1:length(meetLinks)) {
+for (i in 1:length(newMeetLinks)) {
   # Print out which meet
-  print(paste0("Getting data for meet ", meetLinks[i]))
+  print(paste0("Getting data for meet ", newMeetLinks[i]))
 
   # Go through meets and get dates
-  tempUrl <- meetLinks[i]
+  tempUrl <- newMeetLinks[i]
 
   if(class(try(tempUrl %>%
                GET(., timeout(30), user_agent(randUsrAgnt())) %>%

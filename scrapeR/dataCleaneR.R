@@ -13,7 +13,6 @@ library(stringr)
 library(yaml)
 library(rvest)
 library(kit)
-library(fuzzyjoin)
 library(zoo)
 library(dplyr)
 library(lubridate)
@@ -54,6 +53,8 @@ print("Loading base data...")
 # Query data tables from AWS
 lines <- dbGetQuery(pg, "select * from runner_line_item_raw") %>%
   select(-c(meet_facility, meet_date, meet_track_size))
+
+# Get last load date from details table
 
 # Query meet dates
 meet_dates <- dbGetQuery(pg, "select * from meet_dates") %>%
@@ -235,6 +236,9 @@ runLines <- runLines %>%
     elevation = as.numeric(elevation)
   )
 
+# Status update
+print("Performing altitude conversions...")
+
 # Generate altitude converted mark
 runLines$altConvMark = mapply(getConv, alt = runLines$elevation, event = runLines$EVENT, mark = runLines$MARK_TIME)
 
@@ -363,7 +367,10 @@ rl <- rl %>%
 
 # Join calendar info
 rl <- rl %>%
-  left_join(cal, by = c("meet_date" = "cal_d"))
+  left_join(cal, by = c("meet_date" = "cal_d")) %>%
+  mutate(
+    load_d = lubridate::today()
+  )
 
 # Status update
 print("Uploading to table...")
