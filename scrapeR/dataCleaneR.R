@@ -54,7 +54,12 @@ print("Loading base data...")
 lines <- dbGetQuery(pg, "select * from runner_line_item_raw") %>%
   select(-c(meet_facility, meet_date, meet_track_size))
 
-# Get last load date from details table
+# # Get last load date from details table
+# last_load <- dbGetQuery(pg, "select max(load_d) as last_loaded from runner_lines_details")
+# 
+# # Subset data
+# lines_sub <- lines %>%
+#   filter(load_d > last_load$last_loaded)
 
 # Query meet dates
 meet_dates <- dbGetQuery(pg, "select * from meet_dates") %>%

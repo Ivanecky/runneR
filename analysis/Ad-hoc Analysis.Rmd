@@ -214,7 +214,7 @@ soc <- raceSOC %>%
 # Create SOC value
 soc <- soc %>%
   mutate(
-    soc = round(((0.1 * (month_best_time / winning_time)) + ((c_month_best_time / avg_top_time) * 0.4) + ((c_month_best_time / winning_time) * 0.5)), 5) * 100
+    soc = round(((0.1 * (month_best_time / winning_time)) + ((c_month_best_time / avg_top_time) * 0.2) + ((c_month_best_time / winning_time) * 0.7)), 5) * 100
   ) %>%
   filter(!grepl("XC", EVENT) & competition_year >= 2017) %>%
   filter(!(EVENT_TYPE == "INDOOR" & EVENT == "10K")) %>%
@@ -805,34 +805,104 @@ top %>%
 ```
 
 # SOC Meets
+## Women's Table
 ```{r}
-soc %>%
+pal_hex <- c("#762a83", "#af8dc3", "#e7d4e8", "#f7f7f7",
+             "#d9f0d3", "#7fbf7b", "#1b7837")
+
+rows <- 35
+div <- "D1"
+
+tab <- soc %>%
   ungroup() %>%
   funique() %>%
   filter(GENDER == "F" & competition_year > 2018) %>%
+  filter(MEET_NAME != "west coast relays") %>%
   filter(EVENT %in% c("800m", "Mile", "1500m", "3000m", "5000m", "10k", "3000S")) %>%
-  slice_max(n = 15, order_by = soc) %>%
-  ggplot(aes(reorder(paste0(MEET_NAME, "-", EVENT, " (", competition_year, ")"), soc), soc, fill = as.factor(competition_year))) +
-  geom_bar(stat = "identity") +
-  geom_label(aes(label = soc), fill = "white", size = 7) +
-  ggplot2::labs(
-    x = "",
-    y = "SOC",
-    caption = "Omitting XC competitions.",
-    title = "Top 15 Women's Races Based on Strength of Competition (SOC)",
-    subtitle = "Races shown from 2019-2022 seasons."
-  ) +
-  ggplot2::theme_bw() +
-  scale_fill_stata() +
-  ggplot2::theme(
-    aspect.ratio = 9 / 16,
-    axis.text.y = element_text(face = "italic"),
-    plot.title = ggplot2::element_text(size = 45, hjust = 0.5, vjust = 0.5, face = "bold"),
-    plot.subtitle = element_text(face = "italic"),
-    text = element_text(size=35, face = "bold")
-  ) + 
-  guides(fill=guide_legend(title="Season")) +
-  coord_flip()
+  slice_max(n = rows, order_by = soc) %>%
+  select(
+    MEET_NAME, meet_date, EVENT, soc
+  ) %>%
+  gt::gt() %>% 
+  cols_label(MEET_NAME = "Meet", meet_date = "Date", EVENT = "Event", soc = "Strength of Competition (SOC)") %>% 
+  gt::data_color(
+    columns = soc, 
+    colors = scales::col_numeric(
+      palette = pal_hex,
+      domain = range(soc)
+      )
+    ) %>% #, colors = hulk_pal) %>%
+  gtExtras::gt_theme_538() %>%
+  gt::tab_header(title = paste(glue::glue("Top {rows} Competitions by NCAA Women Since 2019 Based on SOC"))) %>%
+  gt::tab_source_note(gt::md(glue::glue('**Notes**: @ivanxcky | SOC is Strength of Competition | Data as of {lubridate::today()}'))) %>%
+  tab_options(data_row.padding = px(2)) %>%
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(columns = c(1, 3, 4))
+  ) %>%
+  fmt_number(columns = c(4), decimals = 3) %>%
+  fmt_missing(columns = everything(), rows = everything(), missing_text = " ") %>%
+  tab_style(
+    style = list(
+      cell_fill(color = "white")
+    ),
+    locations = cells_body(
+      columns = 4,
+      rows = ((rows+1)/2)
+    )
+  )
+
+tab
+
+tab %>%
+  gtsave("w_soc_all.png")
+```
+
+## Men's Table
+```{r}
+tab <- soc %>%
+  ungroup() %>%
+  funique() %>%
+  filter(GENDER == "M" & competition_year > 2018) %>%
+  filter(MEET_NAME != "west coast relays") %>%
+  filter(EVENT %in% c("800m", "Mile", "1500m", "3000m", "5000m", "10k", "3000S")) %>%
+  slice_max(n = rows, order_by = soc) %>%
+  select(
+    MEET_NAME, meet_date, EVENT, soc
+  ) %>%
+  gt::gt() %>% 
+  cols_label(MEET_NAME = "Meet", meet_date = "Date", EVENT = "Event", soc = "Strength of Competition (SOC)") %>% 
+  gt::data_color(
+    columns = soc, 
+    colors = scales::col_numeric(
+      palette = pal_hex,
+      domain = range(soc)
+      )
+    ) %>% #, colors = hulk_pal) %>%
+  gtExtras::gt_theme_538() %>%
+  gt::tab_header(title = paste(glue::glue("Top {rows} Competitions by NCAA Men Since 2019 Based on SOC"))) %>%
+  gt::tab_source_note(gt::md(glue::glue('**Notes**: @ivanxcky | SOC is Strength of Competition | Data as of {lubridate::today()}'))) %>%
+  tab_options(data_row.padding = px(2)) %>%
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(columns = c(1, 3, 4))
+  ) %>%
+  fmt_number(columns = c(4), decimals = 3) %>%
+  fmt_missing(columns = everything(), rows = everything(), missing_text = " ") %>%
+  tab_style(
+    style = list(
+      cell_fill(color = "white")
+    ),
+    locations = cells_body(
+      columns = 4,
+      rows = ((rows+1)/2)
+    )
+  )
+
+tab
+
+tab %>%
+  gtsave("m_soc_all.png")
 ```
 
 # RPI
@@ -869,7 +939,7 @@ raceDets %>%
   coord_flip()
 ```
 
-# Table of WSOR
+# Table of RPI
 ```{r}
 pal_hex <- c("#762a83", "#af8dc3", "#e7d4e8", "#f7f7f7",
              "#d9f0d3", "#7fbf7b", "#1b7837")
@@ -882,7 +952,7 @@ tab <- raceDets %>%
     rpi = round(rpi, 3)
   ) %>%
   filter(
-   DIVISION == div & GENDER == "F" & competition_year >= 2019 & EVENT %in% c("Mile", "800m", "3000m", "5000m", "1500m", "10k", "3000S")
+   DIVISION == div & GENDER == "M" & competition_year == 2022 & EVENT %in% c("Mile", "800m", "3000m", "5000m", "1500m", "10k", "3000S")
   ) %>%
   ungroup() %>%
   slice_max(n = rows, order_by = rpi) %>%
@@ -900,7 +970,7 @@ tab <- raceDets %>%
       )
     ) %>% #, colors = hulk_pal) %>%
   gtExtras::gt_theme_538() %>%
-  gt::tab_header(title = paste(glue::glue("Top {rows} Performances by NCAA {div} Women Since 2019 Based on RPI"))) %>%
+  gt::tab_header(title = paste(glue::glue("Top {rows} Performances by NCAA {div} Men in 2022 Based on RPI"))) %>%
   gt::tab_source_note(gt::md(glue::glue('**Notes**: @ivanxcky | RPI is Race Performance Index | Data as of {lubridate::today()}'))) %>%
   tab_options(data_row.padding = px(2)) %>%
   tab_style(
@@ -915,14 +985,14 @@ tab <- raceDets %>%
     ),
     locations = cells_body(
       columns = 9,
-      rows = rows
+      rows = ((rows+1) / 2) - 0.5
     )
   )
 
 tab
 
 tab %>%
-  gtsave("w_D1_rpi_19_22_all.png")
+  gtsave("m_D1_rpi_22_all.png")
 ```
 
 # Best Runners of 2021

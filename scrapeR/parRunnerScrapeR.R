@@ -62,21 +62,6 @@ runnerLinks <- vector()
 # Vector to hold links that threw an error
 meetErrLinks <- vector()
 
-# Create a temporary dataframe for runner line item performance
-runner_lines = as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division", FALSE, "1"))
-# Rename columns
-names(runner_lines) = c("YEAR", "EVENT", "MARK", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION", "IS_FIELD", "MARK_TIME")
-# Reformat var
-runner_lines <- runner_lines %>%
-  mutate(
-    YEAR = as.character(YEAR),
-    EVENT = as.character(EVENT),
-    PLACE = as.numeric(PLACE),
-    NAME = as.character(NAME),
-    GENDER = as.character(GENDER),
-    TEAM = as.character(TEAM)
-  )
-
 # Iterate over meets and get data
 for (i in 1:(length(joinLinks))) {
   # Check url
@@ -85,7 +70,7 @@ for (i in 1:(length(joinLinks))) {
   # Check URL validity
   if(class(try(tempURL %>%
                GET(., timeout(30), user_agent(randUsrAgnt())) %>%
-               read_html())) == 'try-error') {
+               read_html()))[1] == 'try-error') {
     print(paste0("Failed to get data for : ", tempURL))
     next
   }
@@ -129,7 +114,7 @@ runnerLinks <- funique(runnerLinks)
 errorLinks <- vector()
 
 # Query data in parallel
-runner_lines <- runnerResQuery(runnerLinks)
+runner_lines <- runnerResQueryV2(runnerLinks)
 
 # Reconnect to data
 # Connect to database

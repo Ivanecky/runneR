@@ -94,19 +94,19 @@ plLinks <- c( # "https://www.tfrrs.org/lists/2770/2019_2020_NCAA_Div._I_Indoor_Q
                "https://tfrrs.org/archived_lists/1345/2014_2015_NCAA_Div._I_Indoor_Qualifying_(FINAL)/2015/i",
                "https://www.tfrrs.org/archived_lists/1347/2014_2015_NCAA_Div._II_Indoor_Qualifying_(FINAL)/2015/i",
                "https://www.tfrrs.org/archived_lists/1353/2014_2015_NCAA_Div._III_Indoor_Qualifying_(FINAL)/2015/i",
-               "https://www.tfrrs.org/archived_lists/1349/2014_2015_NAIA_Indoor_Qualifying_List_(FINAL)/2015/i",
-               "https://www.tfrrs.org/archived_lists/1228/2014_NCAA_Division_I_Outdoor_Qualifying_(FINAL)/2014/o",
-               "https://www.tfrrs.org/archived_lists/1231/2014_NCAA_Division_II_Outdoor_Qualifying_(FINAL)/2014/o",
-               "https://www.tfrrs.org/archived_lists/1232/2014_NCAA_Division_III_Outdoor_Qualifying_(FINAL)/2014/o",
-               "https://www.tfrrs.org/archived_lists/1227/2014_NAIA_Outdoor_Qualifying_List_(FINAL)/2014/o",
-               "https://www.tfrrs.org/archived_lists/1139/2013_2014_NCAA_Div._I_Indoor_Qualifying_(FINAL)/2014/i",
-               "https://www.tfrrs.org/archived_lists/1140/2013_2014_NCAA_Div._II_Indoor_Qualifying_(FINAL)/2014/i",
-               "https://www.tfrrs.org/archived_lists/1141/2013_2014_NCAA_Div._III_Indoor_Qualifying_(FINAL)/2014/i",
-               "https://www.tfrrs.org/archived_lists/1142/2013_2014_NAIA_Indoor_Qualifying_(FINAL)/2014/i",
-               "https://www.tfrrs.org/archived_lists/1029/2013_NCAA_Division_I_Outdoor_Qualifying_(FINAL)/2013/o",
-               "https://www.tfrrs.org/archived_lists/1032/2013_NCAA_Division_II_Outdoor_Qualifying_(FINAL)/2013/o",
-               "https://www.tfrrs.org/archived_lists/1033/2013_NCAA_Division_III_Outdoor_Qualifying_(FINAL)/2013/o",
-               "https://www.tfrrs.org/archived_lists/1026/2013_NAIA_Outdoor_Qualifying_List_(FINAL)/2013/o"
+               "https://www.tfrrs.org/archived_lists/1349/2014_2015_NAIA_Indoor_Qualifying_List_(FINAL)/2015/i"
+               # "https://www.tfrrs.org/archived_lists/1228/2014_NCAA_Division_I_Outdoor_Qualifying_(FINAL)/2014/o",
+               # "https://www.tfrrs.org/archived_lists/1231/2014_NCAA_Division_II_Outdoor_Qualifying_(FINAL)/2014/o",
+               # "https://www.tfrrs.org/archived_lists/1232/2014_NCAA_Division_III_Outdoor_Qualifying_(FINAL)/2014/o",
+               # "https://www.tfrrs.org/archived_lists/1227/2014_NAIA_Outdoor_Qualifying_List_(FINAL)/2014/o",
+               # "https://www.tfrrs.org/archived_lists/1139/2013_2014_NCAA_Div._I_Indoor_Qualifying_(FINAL)/2014/i",
+               # "https://www.tfrrs.org/archived_lists/1140/2013_2014_NCAA_Div._II_Indoor_Qualifying_(FINAL)/2014/i",
+               # "https://www.tfrrs.org/archived_lists/1141/2013_2014_NCAA_Div._III_Indoor_Qualifying_(FINAL)/2014/i",
+               # "https://www.tfrrs.org/archived_lists/1142/2013_2014_NAIA_Indoor_Qualifying_(FINAL)/2014/i",
+               # "https://www.tfrrs.org/archived_lists/1029/2013_NCAA_Division_I_Outdoor_Qualifying_(FINAL)/2013/o",
+               # "https://www.tfrrs.org/archived_lists/1032/2013_NCAA_Division_II_Outdoor_Qualifying_(FINAL)/2013/o",
+               # "https://www.tfrrs.org/archived_lists/1033/2013_NCAA_Division_III_Outdoor_Qualifying_(FINAL)/2013/o",
+               # "https://www.tfrrs.org/archived_lists/1026/2013_NAIA_Outdoor_Qualifying_List_(FINAL)/2013/o"
 #                "https://www.tfrrs.org/archived_lists/942/2012_2013_NCAA_Div._I_Indoor_Qualifying_(FINAL)/2013/i",
 #                "https://www.tfrrs.org/archived_lists/943/2012_2013_NCAA_Div._II_Indoor_Qualifying_(FINAL)/2013/i",
 #                "https://www.tfrrs.org/archived_lists/944/2012_2013_NCAA_Div._III_Indoor_Qualifying_(FINAL)/2013/i",
@@ -160,6 +160,8 @@ for ( i in 1:length(plLinks)) {
   plMeetLinks <- append(plMeetLinks, meetUrls)
 }
 
+joinLinks <- plMeetLinks
+
 joinLinks <- joinLinks[!(grepl("_Jump|_Vault|meteres|Meters|Hurdles|_Throw|Mile|Pentathlon|Heptathlon|Shot_Put|Discus|Hammer|Javelin|Decathlon|Steeplechase", joinLinks, ignore.case = TRUE))]
 joinLinks <- joinLinks[!(grepl("_Relay", joinLinks, ignore.case = TRUE) & !grepl("_Relays", joinLinks, ignore.case = TRUE))]
 
@@ -178,7 +180,36 @@ runnerLinks <- vector()
 meetErrLinks <- vector()
 
 # Try running in parallel
-runnerLinks <- getParRunnerURLs(joinLinks)
+# runnerLinks <- getParRunnerURLs(joinLinks)
+
+# Get performance meet links
+for(i in 1:length(joinLinks)) {
+  # Print for status
+  print(paste0("Getting data for: ", joinLinks[i]))
+  
+  # Try and get runner links
+  temp_links <- tryCatch({
+    # Get runner
+    tempRunnerLinks <- getIndoorRunnerURLs(joinLinks[i])
+    # Return value
+    return(tempRunnerLinks)
+  },  
+  error=function(cond) {
+      tryCatch({
+        tempRunnerLinks <- getXCRunnerURLs(joinLinks[i])
+        # Return value
+        return(tempRunnerLinks)
+      },
+      error=function(cond) {
+        return(NA)
+      }
+    )
+  }
+  )
+  
+  # Append to data
+  runnerLinks <- append(temp_links)
+}
 
 # Get unqiue runners
 runnerLinks <- funique(runnerLinks)

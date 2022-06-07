@@ -52,11 +52,13 @@ getMeetLinks <- function(url = "https://www.tfrrs.org/results_search.html") {
   # Manipulate strings
   for ( i  in 1:length(meets) )
   {
-    temp <- meets[i]
-    temp <- paste0("https:", temp)
-    temp <- gsub("[[:space:]]", "", temp)
-    # temp <- paste0(substr(temp, 1, nchar(temp)-3), "tml")
-    meets[i] <- temp
+    if(!grepl("http", meets[i])) {
+      temp <- meets[i]
+      temp <- paste0("https:", temp)
+      temp <- gsub("[[:space:]]", "", temp)
+      # temp <- paste0(substr(temp, 1, nchar(temp)-3), "tml")
+      meets[i] <- temp
+    }
   }
   
   # Return
@@ -168,7 +170,7 @@ getIndoorRunnerURLs <- function(url) {
   # Check URL validity
   if(class(try(url %>%
                GET(., timeout(30), user_agent(randUsrAgnt())) %>%
-               read_html())) == 'try-error') {
+               read_html()))[1] == 'try-error') {
     print(paste0("Failed to get data for : ", url))
     return(NA)
   }
@@ -187,11 +189,13 @@ getIndoorRunnerURLs <- function(url) {
   
   # Iterate over links to fix their formats
   for (i in 1:length(eventLinks)) {
-    temp <- eventLinks[i]
-    #temp = substring(temp, 3)
-    temp <- paste0("https:", temp)
-    temp <- paste0(substr(temp, 1, nchar(temp)-3), "tml")
-    eventLinks[i] <- temp
+    if(!grepl("https", eventLinks[i])) {
+      temp <- eventLinks[i]
+      #temp = substring(temp, 3)
+      temp <- paste0("https:", temp)
+      temp <- paste0(substr(temp, 1, nchar(temp)-3), "tml")
+      eventLinks[i] <- temp
+    }
   }
   
   # Iterate over event links to get runners
@@ -213,7 +217,7 @@ getXCRunnerURLs <- function(url) {
   # Check URL validity
   if(class(try(url %>%
                GET(., timeout(30), user_agent(randUsrAgnt())) %>%
-               read_html())) == 'try-error') {
+               read_html()))[1] == 'try-error') {
     print(paste0("Failed to get data for : ", url))
     return(NA)
   }
@@ -398,18 +402,6 @@ runnerResQueryV2 <- function(runnerLinks) {
     
     source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
     
-    # # Call parallel code
-    # tempRunner <- getParRunner(runnerLinks[i])
-    # 
-    # # Convert to dataframe
-    # tempRunner <- as.data.frame(tempRunner)
-    # 
-    # # Rename
-    # names(tempRunner) <- c("RESULT")
-    # 
-    # # Return value
-    # return(tempRunner)
-    
     # Get runner
     tempRunner <- getRunner(runnerLinks[i])
     
@@ -492,15 +484,12 @@ getParRunnerURLs <- function(meetLinks) {
   
   # Detect cores
   cores <- detectCores()
-  cl <- makeCluster(cores[1]-1, outfile = '/Users/samivanecky/git/runneR/scrapeR/scraperErrors.txt', methods = FALSE, type = "FORK")
+  cl <- makeCluster(cores[1]-1, methods = FALSE, type = "FORK")
   registerDoParallel(cl)
   
   runnerLinks <- foreach(i=1:length(meetLinks), .combine = c, .errorhandling = "remove", .verbose = TRUE, .inorder = FALSE) %dopar% {
     
     source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
-    
-    # Print message for meet
-    print(paste0("Getting data for ", i, " out of ", length(meetLinks)))
     
     # Get runner URLs
     tryCatch({
@@ -510,18 +499,11 @@ getParRunnerURLs <- function(meetLinks) {
       return(tempRunnerLinks)
     },  
     error=function(cond) {
-      tryCatch({
-        # Get runner
         tempRunnerLinks <- getXCRunnerURLs(meetLinks[i])
         # Return value
         return(tempRunnerLinks)
-      },  
-      error=function(cond) {
-        # Sys.sleep(60)
-        return(NA)
-      })
-    })
-    
+      }
+    )
   }
   
   # Stop cluster
