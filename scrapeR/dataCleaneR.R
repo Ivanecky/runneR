@@ -54,12 +54,25 @@ print("Loading base data...")
 lines <- dbGetQuery(pg, "select * from runner_line_item_raw") %>%
   select(-c(meet_facility, meet_date, meet_track_size))
 
-# # Get last load date from details table
-# last_load <- dbGetQuery(pg, "select max(load_d) as last_loaded from runner_lines_details")
-# 
-# # Subset data
-# lines_sub <- lines %>%
-#   filter(load_d > last_load$last_loaded)
+# Get last load date from details table
+last_load <- dbGetQuery(pg, "select max(MEET_DATE) as last_loaded from runner_lines_details")
+
+# Subset data
+lines_sub <- lines %>% 
+  filter(MEET_DATE > last_load$last_loaded) %>%
+  select(RUNNER_KEY) %>%
+  funique()
+
+# Query detailed data
+old_lines <- dbGetQuery(pg, "select * from runner_lines_details") %>%
+  filter(!(RUNNER_KEY %in% lines_sub$RUNNER_KEY))
+
+# Split data into old and new
+new_lines <- lines %>%
+  filter(RUNNER_KEY %in% lines_sub$RUNNER_KEY)
+
+# Remove old data to clear overhead
+rm(lines)
 
 # Query meet dates
 meet_dates <- dbGetQuery(pg, "select * from meet_dates") %>%
@@ -75,7 +88,8 @@ meet_dates <- dbGetQuery(pg, "select * from meet_dates") %>%
   )
 
 # Attempt to join
-lines <- lines %>%
+new_lines <- new_lines %>%
+  filter(YEAR >= 2014) %>%
   mutate(
     MEET_NAME = tolower(MEET_NAME)
   ) %>%
@@ -88,17 +102,14 @@ lines <- lines %>%
   )
 
 # Convert to a data table
-lines <- as.data.table(lines)
+new_lines <- as.data.table(new_lines)
 
 # Split out data
-fieldLines <- lines %>%
+fieldLines <- new_lines %>%
   filter.(IS_FIELD == TRUE)
 
-runLines <- lines %>%
+runLines <- new_lines %>%
   filter.(IS_FIELD == FALSE)
-
-# Remove lines object to clear up memory
-rm(lines)
 
 # Convert marks
 fieldLines$MARK_TIME <- sapply(fieldLines$MARK_TIME, handleFieldEvents)
@@ -245,7 +256,7 @@ runLines <- runLines %>%
 print("Performing altitude conversions...")
 
 # Generate altitude converted mark
-runLines$altConvMark = mapply(getConv, alt = runLines$elevation, event = runLines$EVENT, mark = runLines$MARK_TIME)
+runLines$altConvMark <- mapply(getConv, alt = runLines$elevation, event = runLines$EVENT, mark = runLines$MARK_TIME)
 
 # Generate track size converted mark
 # Join track size fields for conversion
@@ -260,7 +271,6 @@ runLines <- runLines %>%
   mutate.(
     converted_time = conversion * altConvMark
   )
-
 
 # Create calendar data
 cal <- genCal()
@@ -376,6 +386,39 @@ rl <- rl %>%
   mutate(
     load_d = lubridate::today()
   )
+
+# Fix XC classification
+rl <- rl %>%
+  mutate(
+    EVENT_TYPE = case_when(
+      EVENT_TYPE == "XC" & lubridate::month(lubridate::ymd(meet_date)) %in% c("11", "12", "1", "2", "3") & !grepl("XC", EVENT, ignore.case = TRUE) ~ "INDOOR",
+      EVENT_TYPE == "XC" & lubridate::month(lubridate::ymd(meet_date)) %in% c("4", "5", "6") & !grepl("XC", EVENT, ignore.case = TRUE) ~ "OUTDOOR",
+      T ~ EVENT_TYPE
+    )
+  ) %>%
+  filter(grepl("\\.|:", MARK) & MARK_TIME != -999) %>%
+  filter(IS_FIELD == FALSE & converted_time != -999 & EVENT_TYPE %in% c("INDOOR", "OUTDOOR", "XC")) %>%
+  group_by(RUNNER_KEY) %>%
+  arrange(meet_date, .by_group = TRUE) %>%
+  mutate(
+    is_duplicate = case_when(
+      MARK_TIME == lag(MARK_TIME) & EVENT == lag(EVENT) & (lubridate::ymd(meet_date) - lubridate::ymd(lag(meet_date)) < 2) ~ 'Y',
+      T ~ 'N'
+    )
+  ) %>%
+  ungroup() %>%
+  group_by(RUNNER_KEY, EVENT, EVENT_TYPE) %>%
+  arrange(MARK_TIME, .by_group = TRUE) %>%
+  mutate(
+    is_duplicate = case_when(
+      MARK_TIME == lag(MARK_TIME) ~ 'Y',
+      T ~ is_duplicate
+    )
+  ) %>%
+  filter(is_duplicate == 'N')
+
+# Recombine to old data
+rl <- rbind(rl, old_lines)
 
 # Status update
 print("Uploading to table...")

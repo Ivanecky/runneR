@@ -847,8 +847,9 @@ runnerScrapeV2 <- function(url){
 
       # Navigate to team link and extract division
       # Convert team page link
-      # team_link <- paste0("https:", team_link)
+      team_link <- gsub("//", "", team_link)
       team_link <- paste0(substr(team_link, 1, nchar(paste0("https:", team_link))-3), "tml")
+      team_link <- gsub("//", "", team_link)
 
       # Get text info for division
       team_page <- tryCatch(
@@ -870,9 +871,9 @@ runnerScrapeV2 <- function(url){
       team_division <- case_when(
         grepl("NAIA", team_page) ~ "NAIA",
         grepl("NJCAA", team_page) ~ "NJCAA",
-        grepl("DIII", team_page) ~ "D3",
-        grepl("DII", team_page) ~ "D2",
-        grepl("DI", team_page) ~ "D1",
+        grepl("DIII|Division 3", team_page) ~ "D3",
+        grepl("DII|Division 2", team_page) ~ "D2",
+        grepl("DI|Division 1", team_page) ~ "D1",
         T ~ "OTHER"
       )
 

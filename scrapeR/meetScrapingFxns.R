@@ -69,7 +69,7 @@ getPLMeetLinks <- function(url) {
   
   if(class(try(url %>%
                GET(., timeout(30), user_agent(randUsrAgnt())) %>%
-               read_html())) == 'try-error') {
+               read_html()))[1] == 'try-error') {
     print(paste0("Failed to get data for : ", url))
     return(NA)
   }
@@ -90,11 +90,13 @@ getPLMeetLinks <- function(url) {
   # Manipulate strings
   for ( i  in 1:length(meets) )
   {
-    temp <- meets[i]
-    temp <- paste0("https:", temp)
-    temp <- gsub("[[:space:]]", "", temp)
-    # temp <- paste0(substr(temp, 1, nchar(temp)-3), "tml")
-    meets[i] <- temp
+    if(!grepl("http", meets[i])) {
+      temp <- meets[i]
+      temp <- paste0("https:", temp)
+      temp <- gsub("[[:space:]]", "", temp)
+      # temp <- paste0(substr(temp, 1, nchar(temp)-3), "tml")
+      meets[i] <- temp
+    }
   }
   
   # Return
@@ -484,7 +486,7 @@ getParRunnerURLs <- function(meetLinks) {
   
   # Detect cores
   cores <- detectCores()
-  cl <- makeCluster(cores[1]-1, methods = FALSE, type = "FORK")
+  cl <- makeCluster(cores[1]-1, methods = FALSE)
   registerDoParallel(cl)
   
   runnerLinks <- foreach(i=1:length(meetLinks), .combine = c, .errorhandling = "remove", .verbose = TRUE, .inorder = FALSE) %dopar% {
@@ -511,4 +513,102 @@ getParRunnerURLs <- function(meetLinks) {
   
   # Return data
   return(runnerLinks)
+}
+
+# Function to get event results
+getEventResults <- function(url) {
+  # Get html
+  html <- url %>%
+    read_html()
+  
+  tabs <- html %>%
+    html_table()
+  
+  meet_name <- html %>%
+    html_element(xpath = "/html/body/div[3]/div/div/div[1]/h3/a") %>%
+    html_text()
+  
+  meet_date <- html %>%
+    html_element(xpath = "/html/body/div[3]/div/div/div[2]/div/div[1]/div[1]/div[1]") %>%
+    html_text()
+  
+  meet_loc <- html %>%
+    html_element(xpath = "/html/body/div[3]/div/div/div[2]/div/div[1]/div[1]/div[3]") %>%
+    html_text()
+  
+  race_names <- html %>%
+    html_elements(css = "h3") %>%
+    html_text()
+  
+  # Clean up whitespace
+  meet_name <- trimws(meet_name)
+  meet_date <- trimws(meet_date)
+  meet_loc <- trimws(meet_loc)
+  race_names <- trimws(race_names)
+  
+  # Drop first race name (same as meet name)
+  race_names <- race_names[2:length(race_names)]
+  
+  # Read tables
+  for (i in 1:length(tabs)) {
+    if(exists("race_results")) {
+      # Create temporary holding table
+      temp_results <- as.data.frame(tabs[i])
+      # Subset data
+      temp_results <- temp_results %>%
+        select(
+          PL, NAME, YEAR, TEAM, TIME
+        )
+      # Add race name
+      temp_results$RACE_NAME <- race_names[2]
+      # Bind to existing data
+      race_results <- rbind.fill(race_results, temp_results)
+      
+    } else {
+      # Create new table
+      race_results <- as.data.frame(tabs[i])
+      # Subset data
+      race_results <- race_results %>%
+        select(
+          PL, NAME, YEAR, TEAM, TIME
+        )
+      # Add race name
+      race_results$RACE_NAME <- race_names[1]
+    }
+  }
+  
+  # Append other fields to table
+  race_results <- race_results %>%
+    mutate(
+      MEET_DATE = meet_date,
+      MEET_LOCATION = meet_loc,
+      MEET_NAME = meet_name
+    )
+  
+  # Return results
+  return(race_results)
+}
+
+# Function to get event links
+getEventLinks <- function(url) {
+  # Check URL validity
+  if(class(try(url %>%
+               GET(., timeout(30), user_agent(randUsrAgnt())) %>%
+               read_html()))[1] == 'try-error') {
+    print(paste0("Failed to get data for : ", url))
+    return(NA)
+  }
+  
+  # Query HTML
+  eventLinks <- url %>%
+    GET(., timeout(30)) %>%
+    read_html() %>%
+    html_nodes(xpath = "//tbody/tr/td/a") %>%
+    html_attr("href")
+  
+  # Subset links
+  eventLinks <- eventLinks[grepl("results", eventLinks)]
+  
+  # Return links
+  return(eventLinks)
 }

@@ -51,8 +51,8 @@ newMeetLinks <- currentLinks %>%
 newMeetLinks <- funique(newMeetLinks)
 
 # Clean out links that are event specific
-meetLinks <- meetLinks[!(grepl("_Jump|_Vault|meteres|Meters|Hurdles|_Throw|Mile|Pentathlon|Heptathlon|Shot_Put|Discus|Hammer|Javelin|Decathlon|Steeplechase", meetLinks, ignore.case = TRUE))]
-meetLinks <- meetLinks[!(grepl("_Relay", meetLinks, ignore.case = TRUE) & !grepl("_Relays", meetLinks, ignore.case = TRUE))]
+newMeetLinks <- newMeetLinks[!(grepl("_Jump|_Vault|meteres|Meters|Hurdles|_Throw|Mile|Pentathlon|Heptathlon|Shot_Put|Discus|Hammer|Javelin|Decathlon|Steeplechase", meetLinks, ignore.case = TRUE))]
+newMeetLinks <- newMeetLinks[!(grepl("_Relay", meetLinks, ignore.case = TRUE) & !grepl("_Relays", meetLinks, ignore.case = TRUE))]
 
 # Vectors to hold info
 meetNames <- vector()
@@ -71,7 +71,7 @@ for (i in 1:length(newMeetLinks)) {
 
   if(class(try(tempUrl %>%
                GET(., timeout(30), user_agent(randUsrAgnt())) %>%
-               read_html())) == 'try-error') {
+               read_html()))[1] == 'try-error') {
     print(paste0("Failed to get data for : ", tempUrl))
     errorLinks <- append(errorLinks, tempUrl)
     next
@@ -165,6 +165,11 @@ meets <- as.data.frame(cbind(meetNames, meetDates, meetFacs, meetTrkSz))
 names(meets) <- c("meet_name", "meet_date", "meet_facility", "meet_track_size")
 
 meets <- meets %>%
+  mutate(
+    meet_name = trimws(meet_name),
+    meet_date = lubridate::ymd(meet_date),
+    meet_facility = trimws(meet_facility)
+  ) %>%
   funique()
 
 # Upload to a table

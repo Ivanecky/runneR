@@ -1,0 +1,280 @@
+---
+title: "runneR Data Validation"
+author: "Samuel Ivanecky"
+date: '2022-06-13'
+output: html_document
+---
+
+# Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width=18, fig.height=10) 
+
+# Code to generate line item performances from TFRRS.
+library(tidymodels)
+library(httr)
+library(jsonlite)
+library(RPostgreSQL)
+library(DBI)
+library(reshape2)
+library(stringr)
+library(stringi)
+library(yaml)
+library(rvest)
+library(kit)
+library(ggthemes)
+library(ggridges)
+library(ggrepel)
+library(ggpubr)
+library(zoo)
+library(dplyr)
+library(gt)
+library(gtExtras)
+library(data.table)
+library(tidytable)
+
+# Source file for functions
+source("/Users/samivanecky/git/runneR/scrapeR/Scraping_Fxns.R")
+source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
+
+# Read connection data from yaml
+pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
+
+# Connect to database
+pg <- dbConnect(
+  RPostgres::Postgres(),
+  host = pg.yml$host,
+  user = pg.yml$user,
+  db = pg.yml$database,
+  port = pg.yml$port
+)
+
+reformatTimes <- function(mark) {
+  sec <- str_pad((mark %% 60), width = 2, side = "left", pad = "0")
+  min <- floor(mark / 60)
+  time <- paste0(min, ":", sec)
+  return(time)
+}
+```
+
+# Query Data
+```{r}
+# Query
+results <- dbGetQuery(pg, "select distinct * from meet_results_raw")
+
+cal <- genCal()
+```
+
+# Clean Data
+## Remove Rows with NA
+```{r}
+# Subset NA data
+na_rows <- results %>%
+  filter(
+    is.na(NAME) | is.na(TIME) | is.na(RACE_NAME)
+  )
+
+# Remove NA rows
+res_sub <- results %>%
+  filter(
+    !(is.na(NAME) | is.na(TIME) | is.na(RACE_NAME))
+  )
+```
+
+## Clean Up Fields
+```{r}
+# Convert to data.table
+res_sub <- data.table::as.data.table(res_sub)
+
+res_sub <- res_sub %>%
+  mutate.(
+    # Prelim
+    is_prelim = case_when(
+      grepl("prelim|heats", RACE_NAME, ignore.case = TRUE) ~ 1,
+      T ~ 0
+    ),
+    # Race distance
+    event = case_when(
+      grepl("10000 meter|10k|10,000|10000", RACE_NAME, ignore.case = TRUE) & !grepl("xc|cross country|cc", RACE_NAME, ignore.case = TRUE) ~ "10k",
+      grepl("5000 meter|10k|5,000|5000", RACE_NAME, ignore.case = TRUE) & !grepl("xc|cross country|cc", RACE_NAME, ignore.case = TRUE) ~ "5k",
+      grepl("10000 meter|10k|10,000|10000", RACE_NAME, ignore.case = TRUE) & (grepl("xc|cross country|cc", RACE_NAME, ignore.case = TRUE) | grepl("xc|cross country|cc", MEET_NAME, ignore.case = TRUE)) ~ "10k XC",
+      grepl("5000 meter|10k|5,000|5000", RACE_NAME, ignore.case = TRUE) & (grepl("xc|cross country|cc", RACE_NAME, ignore.case = TRUE) | grepl("xc|cross country|cc", MEET_NAME, ignore.case = TRUE)) ~ "5k XC",
+      grepl("6000m|6000|6,000|6k", RACE_NAME, ignore.case = TRUE) & (grepl("xc|cross country|cc", RACE_NAME, ignore.case = TRUE) | grepl("xc|cross country|cc", MEET_NAME, ignore.case = TRUE)) ~ "6k XC",
+      grepl("100 meter|100m|100 m", RACE_NAME, ignore.case = TRUE) & !grepl("hurdle|mH", RACE_NAME, ignore.case = TRUE) ~ "100m",
+      grepl("200 meter|200m|200 m", RACE_NAME, ignore.case = TRUE) ~ "200m",
+      grepl("400 meter|400m|400 m", RACE_NAME, ignore.case = TRUE) & !grepl("hurdle|mH", RACE_NAME, ignore.case = TRUE) ~ "400m",
+      grepl("800 meter|800m|800 m", RACE_NAME, ignore.case = TRUE) ~ "800m",
+      grepl("1500 meter|1500m|1500 m|1,500", RACE_NAME, ignore.case = TRUE) ~ "1500m",
+      grepl("mile", RACE_NAME, ignore.case = TRUE) ~ "Mile",
+      grepl("3000|3k|3000m|3000 m|3,000", RACE_NAME, ignore.case = TRUE) & !grepl("3000S|steeple", RACE_NAME, ignore.case = TRUE) ~ "3000m",
+      (grepl("3000|3000m|3000 m", RACE_NAME, ignore.case = TRUE) & grepl("steeple", RACE_NAME, ignore.case = TRUE)) | grepl("3000S", RACE_NAME, ignore.case = TRUE) ~ "3000S",
+      grepl("100 meter|100m|100 hurdles|100 m hurdle|100m hurdle", RACE_NAME, ignore.case = TRUE) & grepl("hurdle|mH|100H", RACE_NAME, ignore.case = TRUE) ~ "100mH",
+      grepl("110 meter|110m|110 hurdles|110 m hurdle|110m hurdle", RACE_NAME, ignore.case = TRUE) & grepl("hurdle|mH|110H", RACE_NAME, ignore.case = TRUE) ~ "110mH",
+      grepl("400 meter|400mH|400 hurdles|400 m hurdle|400m hurdle", RACE_NAME, ignore.case = TRUE) & grepl("hurdle|mH|400H|400mH", RACE_NAME, ignore.case = TRUE) ~ "400mH",
+      grepl("60 meter|60m|60 m", RACE_NAME, ignore.case = TRUE) & !grepl("hurdle|60mH", RACE_NAME, ignore.case = TRUE) ~ "60m",
+      grepl("60 meter|60m| 60 hurdles|60 m hurdle", RACE_NAME, ignore.case = TRUE) & grepl("hurdle|60mH", RACE_NAME, ignore.case = TRUE) ~ "60mH",
+      grepl("55 meter|55m| 55 hurdles|55 m hurdle", RACE_NAME, ignore.case = TRUE) & grepl("hurdle|55mH", RACE_NAME, ignore.case = TRUE) ~ "60mH",
+      grepl("55 meter|55m|55 m", RACE_NAME, ignore.case = TRUE) & !grepl("hurdle", RACE_NAME, ignore.case = TRUE) ~ "55m",
+      grepl("600 meter|600m|600 m", RACE_NAME, ignore.case = TRUE) ~ "600m",
+      grepl("1000 meter|1000m|1k|1000 m", RACE_NAME, ignore.case = TRUE) ~ "1000m",
+      grepl("300 meter|300m|300 m", RACE_NAME, ignore.case = TRUE) ~ "300m",
+      grepl("500 meter|500m|500 m", RACE_NAME, ignore.case = TRUE) ~ "500m",
+      grepl("2000 steeplechase", RACE_NAME, ignore.case = TRUE) | (grepl("2000", RACE_NAME) & grepl("steeple", RACE_NAME, ignore.case = TRUE)) ~ "2000S",
+      grepl("1500 steeplechase", RACE_NAME, ignore.case = TRUE) | (grepl("1500", RACE_NAME) & grepl("steeple", RACE_NAME, ignore.case = TRUE)) ~ "1500S",
+      T ~ "OTHER"
+    )
+  )
+```
+
+## Break Out Other Events
+```{r}
+# Filter out OTHER events
+other_evnts <- res_sub %>%
+  filter.(
+    event == "OTHER"
+  )
+
+res_sub <- res_sub %>%
+  filter.(
+    event != "OTHER"
+  )
+
+# Define gender
+res_sub <- res_sub %>%
+  mutate.(
+    gender = case_when(
+      grepl("men|male|boy", RACE_NAME, ignore.case = TRUE) & !grepl("women", RACE_NAME, ignore.case = TRUE) ~ "M",
+      grepl("women|woman|girl|female", RACE_NAME, ignore.case = TRUE) ~ "F",
+      T ~ NA
+    )
+  )
+```
+
+## Create Runner Lookup Dictionary
+```{r}
+# Lookup dictionary
+rnrs <- res_sub %>%
+  select.(
+    NAME, TEAM, YEAR, gender
+  ) %>%
+  funique() %>%
+  mutate.(
+    class = case_when(
+      grepl("fr|freshman", YEAR, ignore.case = TRUE) ~ "FR",
+      grepl("so|sophomore", YEAR, ignore.case = TRUE) ~ "SO",
+      grepl("jr|junior", YEAR, ignore.case = TRUE) ~ "JR",
+      grepl("sr|senior", YEAR, ignore.case = TRUE) ~ "SR",
+      grepl("un|unattached", YEAR, ignore.case = TRUE) | grepl("unattached", TEAM, ignore.case = TRUE) ~ "Unattached",
+      T ~ "OTHER"
+    )
+  )
+
+# Split out non-year runners
+no_year <- rnrs %>%
+  filter.(
+    class == "OTHER"
+  ) 
+
+rnrs <- rnrs %>%
+  filter.(
+    class != "OTHER"
+  ) %>%
+  summarise.(
+    gender = max(gender, na.rm = T),
+    .by = c(NAME, TEAM, YEAR, class)
+  ) %>%
+  funique()
+```
+
+## Correct Class in Data
+```{r}
+# Drop current year and join in data
+res_ <- res_sub %>%
+  select.(-c(gender)) %>%
+  left_join.(rnrs, by = c("NAME", "TEAM", "YEAR")) %>%
+  select(-c(YEAR))
+```
+
+## Get Meet Dates
+```{r}
+res_ <- res_ %>%
+  mutate.(
+    month = case_when(
+      grepl("January", MEET_DATE, ignore.case = TRUE) ~ "1",
+      grepl("February", MEET_DATE, ignore.case = TRUE) ~ "2",
+      grepl("March", MEET_DATE, ignore.case = TRUE) ~ "3",
+      grepl("April", MEET_DATE, ignore.case = TRUE) ~ "4",
+      grepl("May", MEET_DATE, ignore.case = TRUE) ~ "5",
+      grepl("June", MEET_DATE, ignore.case = TRUE) ~ "6",
+      grepl("July", MEET_DATE, ignore.case = TRUE) ~ "7",
+      grepl("August", MEET_DATE, ignore.case = TRUE) ~ "8",
+      grepl("September", MEET_DATE, ignore.case = TRUE) ~ "9",
+      grepl("October", MEET_DATE, ignore.case = TRUE) ~ "10",
+      grepl("Novemeber", MEET_DATE, ignore.case = TRUE) ~ "11",
+      grepl("December", MEET_DATE, ignore.case = TRUE) ~ "12",
+      T ~ 'OTHER'
+    ),
+    year = substr(MEET_DATE, nchar(MEET_DATE) - 4, nchar(MEET_DATE)),
+    day = stri_extract_first_regex(MEET_DATE, "[0-9]+")
+  ) %>%
+  mutate.(
+    race_date = lubridate::ymd(paste0(year, "-", month, "-", day))
+  )
+```
+
+## Get Numeric Times
+```{r}
+res_$numeric_time = sapply(res_$TIME, handleTimes)
+res_ <- res_ %>%
+  mutate.(
+    numeric_time = as.numeric(numeric_time)
+  )
+```
+
+# Data Validation
+```{r}
+# Get counts of event by gender by year
+race_cnts <- res_ %>%
+  summarise.(
+    n_races = n(),
+    .by = c(year, gender, event)
+  )
+```
+
+## Plot Data
+```{r}
+race_cnts %>%
+  filter(!is.na(gender)) %>%
+  ggplot(aes(year, n_races, color = gender, group = gender)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(event ~ ., scales = "free_y")
+```
+
+# Data Analysis
+## Steeplechase Plot
+```{r}
+res_ %>%
+  filter(gender == "F") %>%
+  filter(event == "3000S") %>%
+  ggplot(aes(numeric_time, fill = year)) +
+  geom_histogram() +
+  ggplot2::labs(
+    x = "",
+    y = "",
+    caption = "",
+    title = "Women's Steeplechase Times by Season",
+    subtitle = ""
+  ) +
+  ggplot2::theme_bw() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    # legend.position = "none",
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 40, hjust = 0.5, vjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic"),
+    text = element_text(size=25, face = "bold")
+  ) +
+  facet_wrap(year ~ ., scales = "free_y")
+
+```

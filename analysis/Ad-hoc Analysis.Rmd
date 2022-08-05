@@ -6,6 +6,7 @@ output: html_document
 ---
 
 # Setup
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
 knitr::opts_chunk$set(fig.width=18, fig.height=10) 
@@ -16,13 +17,11 @@ library(httr)
 library(jsonlite)
 library(RPostgreSQL)
 library(DBI)
-library(RSQLite)
 library(reshape2)
 library(stringr)
 library(yaml)
 library(rvest)
 library(kit)
-library(fuzzyjoin)
 library(ggthemes)
 library(ggridges)
 library(ggrepel)
@@ -59,7 +58,9 @@ reformatTimes <- function(mark) {
 ```
 
 # Data Setup
+
 ## Run Script to Load Data, Query Data
+
 ```{r echo=TRUE, warning=FALSE}
 source("/Users/samivanecky/git/runneR/scrapeR/dataCleaneR.R")
 
@@ -72,22 +73,48 @@ rm(fieldLines)
 ```
 
 ## Query
+
 ### Overall Data
-```{r}
+
+```{r warning=FALSE}
 # Query
 rl <- dbGetQuery(pg, "select * from runner_lines_details")
 
 cal <- genCal()
+
+# Filter to unique
+rl <- rl %>%
+  funique()
+
+# Try and remove duplicates
+rl <- rl %>%
+  filter(grepl("\\.|:", MARK) & MARK_TIME != -999) %>%
+  filter(IS_FIELD == FALSE & converted_time != -999 & EVENT_TYPE %in% c("INDOOR", "OUTDOOR", "XC")) %>%
+  group_by(RUNNER_KEY) %>%
+  arrange(meet_date, .by_group = TRUE) %>%
+  mutate(
+    is_duplicate = case_when(
+      MARK_TIME == lag(MARK_TIME) & EVENT == lag(EVENT) & (lubridate::ymd(meet_date) - lubridate::ymd(lag(meet_date)) < 2) ~ 'Y',
+      T ~ 'N'
+    )
+  ) %>%
+  ungroup() %>%
+  group_by(RUNNER_KEY, EVENT, EVENT_TYPE) %>%
+  arrange(MARK_TIME, .by_group = TRUE) %>%
+  mutate(
+    is_duplicate = case_when(
+      MARK_TIME == lag(MARK_TIME) ~ 'Y',
+      T ~ is_duplicate
+    )
+  ) %>%
+  filter(is_duplicate == 'N')
 ```
 
 ### Aggregate Divisions
-```{r warning=FALSE}
-# Convert to data.table for faster manipulation
-rlDT <- data.table::setDT(rl)
 
-# Clean out bad data
-rl <- rl %>%
-  filter(grepl("\\.|:", MARK) & MARK_TIME != -999)
+```{r warning=FALSE}
+# Convert to DT
+rlDT <- data.table::setDT(rl)
 
 # Subset teams for joining division
 teams <- rl %>%
@@ -102,6 +129,7 @@ divNames <- rlDT %>%
 ```
 
 ## Recreate Grouped Yearly Data Using Competition Year
+
 ```{r warning=FALSE}
 # Create all-time grouped data
 grpYrly <- rlDT %>%
@@ -129,10 +157,10 @@ grpYrly <- as.data.frame(grpYrly)
 ```
 
 ## Strength Of Competition
+### Get Grouped Data
 ```{r warning=FALSE}
 # Line item level
 raceGrp <- rl %>%
-  filter(IS_FIELD == FALSE & converted_time != -999) %>%
   mutate(
     TIME = converted_time
   ) %>%
@@ -147,10 +175,14 @@ raceGrp <- rl %>%
   ) %>%
   select(-c(DIVISION)) %>%
   left_join(teams, by = c("TEAM"))
+```
 
+### Get Best Times for Time Durations
+```{r warning=FALSE}
 # Get best weekly times
 raceBestWeekly <- rl %>%
-  filter(IS_FIELD == FALSE & converted_time != -999) %>%
+  filter(is_duplicate == "N") %>%
+  filter(IS_FIELD == FALSE & converted_time != -999 & EVENT_TYPE %in% c("INDOOR", "OUTDOOR", "XC")) %>%
   mutate(
     TIME = converted_time
   ) %>%
@@ -172,7 +204,8 @@ raceBestWeekly <- rl %>%
   select(EVENT, EVENT_TYPE, GENDER, week_key, week_best_time, c_week_best_time)
 
 raceBestMonthly <- rl %>%
-  filter(IS_FIELD == FALSE & converted_time != -999) %>%
+  filter(is_duplicate == "N") %>%
+  filter(IS_FIELD == FALSE & converted_time != -999 & EVENT_TYPE %in% c("INDOOR", "OUTDOOR", "XC")) %>%
   mutate(
     TIME = converted_time
   ) %>%
@@ -191,7 +224,10 @@ raceBestMonthly <- rl %>%
     month_key = paste0(year_index, "-", month_index)
   ) %>%
   select(EVENT, EVENT_TYPE, GENDER, month_key, month_best_time, c_month_best_time)
+```
 
+### Calculate SOC
+```{r warning=FALSE}
 # Create data for race strength (could get messy with heats...) - SOC = Strength of Competition
 raceSOC <- raceGrp %>%
   ungroup() %>%
@@ -223,9 +259,13 @@ soc <- soc %>%
     !(EVENT == "3000m" & EVENT_TYPE != "INDOOR") &
     !(EVENT == "3000S" & EVENT_TYPE == "INDOOR") &
     !(EVENT == "1500m" & EVENT_TYPE == "INDOOR") &
-    !(MEET_NAME == "WSC Relays and Multi-Events Qualifier" & EVENT == "800m")
+    !(MEET_NAME == "WSC Relays and Multi-Events Qualifier" & EVENT == "800m") &
+    !(tolower(MEET_NAME) == "michael johnson invitational" & lubridate::ymd(meet_date) == "2021-03-19")
   )
+```
 
+
+```{r warning=FALSE}
 # Join SOC data to line level
 socJoin <- soc %>%
   ungroup() %>%
@@ -264,6 +304,7 @@ raceDets <- raceGrp %>%
 ```
 
 ## Pivot Out Personal Best Data
+
 ```{r warning=FALSE}
 # Create all-time grouped data
 grpAllTime <- rl %>%
@@ -308,6 +349,7 @@ prDf22 <- grpYrly %>%
 ```
 
 # Join Divisions to All Time Grouping
+
 ```{r}
 # Join
 prDf <- prDf %>%
@@ -318,7 +360,9 @@ prDf22 <- prDf22 %>%
 ```
 
 # Model Attempt
+
 ## Subset D1 Women
+
 ```{r}
 # All-time
 wDf <- prDf %>%
@@ -330,7 +374,9 @@ wDf <- prDf %>%
 ```
 
 # Visuals
+
 ## 3k vs 5k
+
 ```{r}
 wDf %>%
   filter(pr_3000m <= 650 & pr_3000S <= 660) %>%
@@ -366,7 +412,9 @@ wDf %>%
 ```
 
 ## 2022
+
 ### 3k vs 5k in 2022
+
 ```{r}
 prDf22 %>%
   filter(GENDER == "F") %>%
@@ -401,6 +449,7 @@ prDf22 %>%
 ```
 
 ### 3k vs 5k Averages
+
 ```{r}
 prDf22 %>%
   filter(GENDER == "F") %>%
@@ -435,6 +484,7 @@ prDf22 %>%
 ```
 
 ### 3k vs Mile
+
 ```{r}
 prDf22 %>%
   filter(GENDER == "F") %>%
@@ -471,6 +521,7 @@ prDf22 %>%
 ```
 
 ## 800 v Mile
+
 ```{r}
 wDf %>%
   filter(pr_Mile <= 300 & pr_800m <= 160) %>%
@@ -504,6 +555,7 @@ wDf %>%
 ```
 
 ## 5k vs Mile
+
 ```{r}
 wDf %>%
   filter(pr_Mile <= 330 & pr_5000m <= 1170) %>%
@@ -535,6 +587,7 @@ wDf %>%
 ```
 
 ## 5k Improvement
+
 ```{r}
 grpLines %>%
   filter(GENDER == "F" & DIVISION == "D1") %>%
@@ -553,6 +606,7 @@ grpLines %>%
 ```
 
 ## PR 3k vs 5k
+
 ```{r}
 prDf %>%
   filter(DIVISION == "D1" & GENDER == "F" & PR_3000m <= 570) %>%
@@ -563,6 +617,7 @@ prDf %>%
 ```
 
 ## Overall Grouped Data
+
 ```{r}
 grpYrly %>%
   filter(GENDER == "F" & competition_year == "2022") %>%
@@ -589,6 +644,7 @@ grpYrly %>%
 ```
 
 # 6k XC Wins
+
 ```{r}
 grpLines %>%
   filter(GENDER == "F" & EVENT == "6K XC" & YEAR == 2021 & AVG_TIME >= 1000) %>%
@@ -618,7 +674,9 @@ grpLines %>%
 ```
 
 # Post PR Analysis
+
 ## Subset Data
+
 ```{r}
 prs <- lines %>%
   filter(post_pr_shift != -999 & EVENT_TYPE == "INDOOR" & PRELIM == FALSE) %>%
@@ -632,6 +690,7 @@ prs <- lines %>%
 ```
 
 ## Plot Post-PR Performance
+
 ```{r}
 prs %>%
   filter(DIVISION %in% c("D1")) %>%
@@ -659,6 +718,7 @@ prs %>%
 ```
 
 ## Plot For Big Jumps in Performance
+
 ```{r}
 prs %>%
   filter(!is.na(TIME_SHIFT)) %>%
@@ -693,6 +753,7 @@ prs %>%
 ```
 
 # 2021 Improvements
+
 ```{r}
 lines %>%
   ungroup() %>%
@@ -731,7 +792,9 @@ lines %>%
 ```
 
 # Top 2021 Performances
+
 ## Avg Time
+
 ```{r}
 runnerGrpYrly %>%
   ungroup() %>%
@@ -762,7 +825,9 @@ runnerGrpYrly %>%
 ```
 
 # Top Runner Progression
+
 ## Get Top Runners
+
 ```{r}
 # Set event and gender
 evnt <- "Mile"
@@ -805,7 +870,9 @@ top %>%
 ```
 
 # SOC Meets
+
 ## Women's Table
+
 ```{r}
 pal_hex <- c("#762a83", "#af8dc3", "#e7d4e8", "#f7f7f7",
              "#d9f0d3", "#7fbf7b", "#1b7837")
@@ -816,7 +883,7 @@ div <- "D1"
 tab <- soc %>%
   ungroup() %>%
   funique() %>%
-  filter(GENDER == "F" & competition_year > 2018) %>%
+  filter(GENDER == "F" & competition_year > 2015) %>%
   filter(MEET_NAME != "west coast relays") %>%
   filter(EVENT %in% c("800m", "Mile", "1500m", "3000m", "5000m", "10k", "3000S")) %>%
   slice_max(n = rows, order_by = soc) %>%
@@ -859,6 +926,7 @@ tab %>%
 ```
 
 ## Men's Table
+
 ```{r}
 tab <- soc %>%
   ungroup() %>%
@@ -906,13 +974,14 @@ tab %>%
 ```
 
 # RPI
+
 ```{r}
 raceDets %>%
   mutate(
     rpi = round(rpi, 3)
   ) %>%
   filter(
-   DIVISION == "D1" & GENDER == "F" & competition_year == "2022" & EVENT %in% c("Mile", "800m", "3000m", "5000m", "1500m", "10k", "3000S") & 
+   DIVISION == "D1" & GENDER == "F" & competition_year >= 2018 & EVENT %in% c("Mile", "800m", "3000m", "5000m", "1500m", "10k", "3000S") & 
      EVENT_TYPE == "OUTDOOR"
   ) %>%
   ungroup() %>%
@@ -940,6 +1009,7 @@ raceDets %>%
 ```
 
 # Table of RPI
+
 ```{r}
 pal_hex <- c("#762a83", "#af8dc3", "#e7d4e8", "#f7f7f7",
              "#d9f0d3", "#7fbf7b", "#1b7837")
@@ -952,7 +1022,7 @@ tab <- raceDets %>%
     rpi = round(rpi, 3)
   ) %>%
   filter(
-   DIVISION == div & GENDER == "M" & competition_year == 2022 & EVENT %in% c("Mile", "800m", "3000m", "5000m", "1500m", "10k", "3000S")
+   DIVISION == div & GENDER == "F" & competition_year >= 2016 & EVENT %in% c("Mile", "800m", "3000m", "5000m", "1500m", "10k", "3000S")
   ) %>%
   ungroup() %>%
   slice_max(n = rows, order_by = rpi) %>%
@@ -970,7 +1040,7 @@ tab <- raceDets %>%
       )
     ) %>% #, colors = hulk_pal) %>%
   gtExtras::gt_theme_538() %>%
-  gt::tab_header(title = paste(glue::glue("Top {rows} Performances by NCAA {div} Men in 2022 Based on RPI"))) %>%
+  gt::tab_header(title = paste(glue::glue("Top {rows} Performances by NCAA {div} Women Since 2016 Based on RPI"))) %>%
   gt::tab_source_note(gt::md(glue::glue('**Notes**: @ivanxcky | RPI is Race Performance Index | Data as of {lubridate::today()}'))) %>%
   tab_options(data_row.padding = px(2)) %>%
   tab_style(
@@ -992,10 +1062,11 @@ tab <- raceDets %>%
 tab
 
 tab %>%
-  gtsave("m_D1_rpi_22_all.png")
+  gtsave("w_D1_rpi_16_22_all.png")
 ```
 
 # Best Runners of 2021
+
 ```{r}
 raceDets %>%
   mutate(
@@ -1037,6 +1108,7 @@ raceDets %>%
 ```
 
 # Best Performances of 2021
+
 ```{r}
 raceDets %>%
   mutate(
@@ -1108,4 +1180,3 @@ raceDets %>%
   guides(fill=guide_legend(title="Event")) +
   coord_flip()
 ```
-
