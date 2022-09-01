@@ -43,62 +43,30 @@ pg <- dbConnect(
 meetLinks <- getMeetLinks(url)
 
 # Query old meet links
-meetLinks <- dbGetQuery(pg, "select distinct * from meet_links")
+# meetLinks <- dbGetQuery(pg, "select distinct * from meet_links")
 
 # Remove any dups
 meetLinks <- funique(meetLinks)
-
-# Vector to hold runner URLs
-eventLinks <- vector()
+meetLinks <- meetLinks$links
 
 # Vector to hold links that threw an error
 meetErrLinks <- vector()
 
-# Iterate over meets and get data
-for (i in 1:length(meetLinks)) {
-  # Check url
-  tempURL <- meetLinks[i]
-  
-  # Check URL validity
-  if(class(try(tempURL %>%
-               GET(., timeout(30), user_agent(randUsrAgnt())) %>%
-               read_html()))[1] == 'try-error') {
-    print(paste0("Failed to get data for : ", tempURL))
-    next
-  }
-  
-  # Print message for meet
-  print(paste0("Getting data for ", i, " out of ", length(meetLinks)))
-  
-  # Get runner URLs
-  tempEventLinks <- tryCatch({
-    # Get runner
-    tempEventLinks <- getEventLinks(tempURL)
-  },  
-  error=function(cond) {
-    message("Here's the original error message:")
-    message(cond)
-    # Sys.sleep(60)
-    return(NA)
-  })
-  
-  # Bind runners 
-  eventLinks <- append(eventLinks, tempEventLinks)
-  
-}
+# Parallel function
+event_links <- getEventLinksPar(meetLinks)
 
 # Remove any duplicates
-eventLinks <- funique(eventLinks)
+event_links <- funique(event_links)
 
 # Iterate over events and get data
-for (i in 1:length(eventLinks)) {
+for (i in 1:length(event_links)) {
   # Set default value
   skip_ <- FALSE
   # Print for status check
-  print(paste0("Getting data for event ", i, " of ", length(eventLinks)))
+  print(paste0("Getting data for event ", i, " of ", length(event_links)))
   # Try and get results
   tempResults <- tryCatch({
-      getEventResults(eventLinks[i])
+      getEventResults(event_links[i])
     }, 
     error=function(cond) {
       skip_ <<- TRUE
@@ -129,5 +97,5 @@ results <- results %>%
   )
 
 # Create database for raw data and write
-dbCreateTable(pg, "meet_results_raw", results)
+# dbCreateTable(pg, "meet_results_raw", results)
 dbWriteTable(pg, "meet_results_raw", results, append = TRUE)

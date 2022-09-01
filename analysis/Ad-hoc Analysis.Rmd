@@ -264,7 +264,6 @@ soc <- soc %>%
   )
 ```
 
-
 ```{r warning=FALSE}
 # Join SOC data to line level
 socJoin <- soc %>%

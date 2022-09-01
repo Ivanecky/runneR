@@ -1,0 +1,623 @@
+---
+title: "SOC Metric"
+author: "Samuel Ivanecky"
+date: "2022-08-11"
+output: html_document
+---
+
+# Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width=18, fig.height=10) 
+
+# Code to generate line item performances from TFRRS.
+library(tidymodels)
+library(httr)
+library(jsonlite)
+library(RPostgreSQL)
+library(DBI)
+library(reshape2)
+library(stringr)
+library(stringi)
+library(yaml)
+library(rvest)
+library(kit)
+library(ggthemes)
+library(ggridges)
+library(ggrepel)
+library(ggpubr)
+library(zoo)
+library(gt)
+library(gtExtras)
+library(data.table)
+library(tidytable)
+library(dplyr)
+
+# Source file for functions
+source("/Users/samivanecky/git/runneR/scrapeR/Scraping_Fxns.R")
+source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
+
+# Read connection data from yaml
+pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
+
+# Connect to database
+pg <- dbConnect(
+  RPostgres::Postgres(),
+  host = pg.yml$host,
+  user = pg.yml$user,
+  db = pg.yml$database,
+  port = pg.yml$port
+)
+
+reformatTimes <- function(mark) {
+  sec <- str_pad(round((mark %% 60), 2), width = 5, side = "left", pad = "0")
+  min <- floor(mark / 60)
+  min <- ifelse(min == 0, "", min)
+  time <- paste0(min, ":", sec)
+  return(time)
+}
+```
+
+# Query Data
+```{r}
+# Query
+res <- dbGetQuery(pg, "select distinct * from meet_results_dets")
+
+cal <- genCal()
+```
+
+## Join Calendar Data to Results
+```{r}
+res <- res %>%
+  left_join(cal, by = c("race_date" = "cal_d")) %>%
+  filter(
+    # Filter out bad marks
+    !(event == "60m" & numeric_time < 5) &
+    !(event == "60mH" & numeric_time < 5) &
+    !(event == "100m" & numeric_time < 9.5) & 
+      !(event == "100mH" & numeric_time < 10) &
+      !(event == "110mH" & numeric_time < 12) &
+      !(event == "200m" & numeric_time < 19) &
+      !(event == "400m" & numeric_time < 43) &
+      !(event ==  "400mH" & numeric_time < 43) &
+      !(event == "300m" & numeric_time < 30) &
+      !(event == "500m" & numeric_time < 58) & 
+      !(event == "600m" & numeric_time < 70) & 
+      !(event == "800m" & numeric_time < 100) &
+      !(event == "1500m" & numeric_time < 200) &
+      !(event == "Mile" & numeric_time < 225) &
+      !(event == "3000m" & numeric_time < 440) &
+      !(event == "3000S" & numeric_time < 480) &
+      !(event == "5k" & numeric_time < 770) &
+      !(event == "10k" & numeric_time < 1560)
+  ) %>%
+  filter(
+    !(event %in% c("1000m", "1500S", "2000S", "300m", "500m", "600m"))
+  )
+```
+
+## Read in CSV
+```{r}
+prev_marks <- read.csv("~/git/runneR/previous_best_marks.csv")
+```
+
+## Load Teams Data
+```{r}
+teams <- dbGetQuery(pg, "select distinct * from team_lookup_info")
+```
+
+## Join Team Info
+```{r}
+teams <- teams %>%
+  mutate(
+    TEAM = trimws(tolower(TEAM))
+  )
+
+res <- res %>%
+  mutate(
+    TEAM = trimws(tolower(TEAM))
+  ) %>%
+  left_join(
+    teams, by = c("TEAM")
+  )
+```
+
+### Check For Schools with No Division
+```{r}
+no_div <- res %>%
+  filter(is.na(DIVISION)) %>%
+  select(TEAM) %>%
+  funique()
+```
+
+## Create Competition Year & Filter Data
+```{r}
+res <- res %>%
+  mutate(
+    competition_year = case_when(
+      (season_cat == "indoor" & month >= 11 & month <= 12)  ~ year_index + 1,
+      T ~ year_index
+    )
+  ) %>%
+  filter(
+    tolower(TEAM) != "unattached"
+  ) %>%
+  filter(
+    tolower(TEAM) %in% tolower(teams$TEAM)
+  )
+```
+
+# Strength Of Competition
+## Get Grouped Data
+```{r warning=FALSE}
+# Line item level
+raceGrp <- res %>%
+  filter(
+    PL != 0
+  ) %>%
+  mutate(
+    clean_time = TIME
+  ) %>%
+  mutate(
+    TIME = converted_time
+  ) %>%
+  group_by(MEET_NAME, race_date, competition_year, gender, event, season_cat, is_prelim) %>%
+  arrange(
+    converted_time, .by_group = TRUE
+  ) %>%
+  mutate(
+    meet_evnt_rank = 1:n(),
+    time_behind_winner = TIME - min(TIME, na.rm = T),
+    place_behind_winner = PL - min(PL, na.rm = T)
+  )
+```
+
+```{r}
+# Handle times
+prev_marks$converted_time = sapply(prev_marks$time, handleTimes)
+
+# Rename & join calendar  info
+prev_marks <- prev_marks %>%
+  select(
+    -c(time)
+  ) %>%
+  mutate(
+    race_date = lubridate::ymd(race_date),
+    converted_time = as.numeric(converted_time),
+    PL = 1
+  ) %>%
+  left_join(
+    cal, by = c("race_date" = "cal_d")
+  )
+
+# Test rbind fill
+res <- plyr::rbind.fill(res, prev_marks)
+```
+
+### Get Best Times for Time Durations
+```{r warning=FALSE}
+# Get best weekly times
+raceBestWeekly <- res %>%
+  filter(
+    PL != 0
+  ) %>%
+  mutate(
+    TIME = converted_time
+  ) %>%
+  ungroup() %>%
+  group_by(event, gender, year_index, week_index) %>%
+  summarise(
+    week_best_time = min(TIME, na.rm = T)
+  ) %>%
+  ungroup() %>%
+  group_by(gender, event) %>%
+  arrange(year_index, week_index, .by_group = TRUE) %>%
+  mutate(
+    c_week_best_time = cummin(week_best_time)
+  ) %>%
+  filter(!is.na(year_index)) %>%
+  mutate(
+    week_key = paste0(year_index, "-", week_index)
+  ) %>%
+  select(event, gender, week_key, week_best_time, c_week_best_time)
+
+raceBestMonthly <- res %>%
+  filter(
+    PL != 0
+  ) %>%
+  mutate(
+    TIME = converted_time
+  ) %>%
+  ungroup() %>%
+  group_by(event, gender, year_index, month_index) %>%
+  summarise(
+    month_best_time = min(TIME, na.rm = T)
+  ) %>%
+  ungroup() %>%
+  group_by(gender, event) %>%
+  arrange(year_index, month_index, .by_group = TRUE) %>%
+  mutate(
+    c_month_best_time = cummin(month_best_time)
+  ) %>%
+  mutate(
+    month_key = paste0(year_index, "-", month_index)
+  ) %>%
+  select(event, gender, month_key, month_best_time, c_month_best_time)
+
+raceBestYearly <- res %>%
+  filter(
+    PL != 0
+  ) %>%
+  mutate(
+    TIME = converted_time
+  ) %>%
+  ungroup() %>%
+  group_by(event, gender, year_index) %>%
+  summarise(
+    year_best_time = min(TIME, na.rm = T)
+  ) %>%
+  ungroup() %>%
+  group_by(gender, event) %>%
+  arrange(year_index, .by_group = TRUE) %>%
+  mutate(
+    c_year_best_time = cummin(year_best_time)
+  ) %>%
+  select(event, gender, year_index, year_best_time, c_year_best_time)
+
+raceBestDaily <- res %>%
+  filter(
+    PL != 0
+  ) %>%
+  mutate(
+    TIME = converted_time
+  ) %>%
+  ungroup() %>%
+  group_by(event, gender, race_date) %>%
+  summarise(
+    day_best_time = min(TIME, na.rm = T)
+  ) %>%
+  ungroup() %>%
+  group_by(gender, event) %>%
+  arrange(race_date, .by_group = TRUE) %>%
+  mutate(
+    c_day_best_time = cummin(day_best_time)
+  ) %>%
+  mutate(
+    prev_c_day_best_time = lag(c_day_best_time)
+  ) %>%
+  filter(!is.na(race_date)) %>%
+  select(event, gender, race_date, day_best_time, c_day_best_time, prev_c_day_best_time)
+```
+
+### Calculate SOC
+```{r warning=FALSE}
+# Create data for race strength (could get messy with heats...) - SOC = Strength of Competition
+raceSOC <- raceGrp %>%
+  ungroup() %>%
+  group_by(
+    MEET_NAME, race_date, competition_year, gender, event
+  ) %>%
+  summarise(
+    avg_top_time = mean(TIME[meet_evnt_rank <= 5], na.rm = T),
+    med_top_time = median(TIME[meet_evnt_rank <= 5], na.rm = T),
+    n_runners = n_distinct(NAME),
+    winning_time = min(TIME, na.rm = T)
+  ) %>%
+  ungroup()
+
+# Join SOC data
+soc <- raceSOC %>%
+  left_join(cal, by = c("race_date" = "cal_d")) %>%
+  left_join(raceBestWeekly, by = c("week_key", "gender", "event")) %>%
+  left_join(raceBestMonthly, by = c("month_key", "gender", "event")) %>%
+  left_join(raceBestYearly, by = c("year_index", "gender", "event")) %>%
+  left_join(raceBestDaily, by = c("race_date", "gender", "event")) %>%
+  filter(!is.na(competition_year))
+
+# Create SOC value
+soc <- soc %>%
+  mutate(
+    soc = round(((0.05 * (month_best_time / winning_time)) + ((c_month_best_time / avg_top_time) * 0.2) + ((c_month_best_time / winning_time) * 0.75)), 5) * 100,
+    soc_v2 = round(((c_year_best_time / avg_top_time) * 0.25) + ((c_year_best_time / winning_time) * 0.75), 5) * 100,
+    soc_v3 = round(((c_day_best_time / avg_top_time) * 0.2) + ((c_day_best_time / winning_time) * 0.8), 5) * 100
+  ) 
+
+```
+
+#### SOC Table Check
+```{r}
+pal_hex <- c("#762a83", "#af8dc3", "#e7d4e8", "#f7f7f7",
+             "#d9f0d3", "#7fbf7b", "#1b7837")
+
+rows <- 50
+
+tab <- soc %>%
+  filter(
+   gender == "M" & competition_year >= 2015 & event %in% c("Mile", "800m", "3000m", "5k", "1500m", "10k", "3000S")
+  ) %>%
+  ungroup() %>% 
+  funique() %>%
+  slice_max(n = rows, order_by = soc) %>%
+  select(
+    MEET_NAME, race_date, event, soc, soc_v2, soc_v3
+  ) %>%
+  gt::gt() %>% 
+  cols_label(MEET_NAME = "Meet", race_date = "Date", event = "Event", soc = "SOC", 
+             soc_v2 = "SOC v2", soc_v3 = "SOC v3") %>% 
+  gt::data_color(
+    columns = soc, 
+    colors = scales::col_numeric(
+      palette = pal_hex,
+      domain = range(soc)
+      )
+    ) %>% #, colors = hulk_pal) %>%
+  gtExtras::gt_theme_538() %>%
+  gt::tab_header(title = paste(glue::glue("Top {rows} Races by NCAA Men Since 2016 Based on SOC"))) %>%
+  gt::tab_source_note(gt::md(glue::glue('**Notes**: @ivanxcky | SOC is Strength of Competition | Data as of {lubridate::today()}'))) %>%
+  tab_options(data_row.padding = px(2)) %>%
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(columns = c(1:6))
+  ) %>%
+  fmt_number(columns = c(6), decimals = 3) %>%
+  fmt_missing(columns = everything(), rows = everything(), missing_text = " ") %>%
+  tab_style(
+    style = list(
+      cell_fill(color = "white")
+    ),
+    locations = cells_body(
+      columns = 6,
+      rows = ((rows+1) / 2) - 0.5
+    )
+  )
+
+tab
+```
+
+```{r warning=FALSE}
+# Join SOC data to line level
+socJoin <- soc %>%
+  ungroup() %>%
+  select(MEET_NAME, race_date, gender, event, competition_year, soc, week_best_time, c_week_best_time, month_best_time, c_month_best_time, c_year_best_time, c_day_best_time,
+         prev_c_day_best_time)
+
+raceDets <- raceGrp %>%
+  left_join(socJoin, by = c("race_date", "MEET_NAME", "gender", "competition_year", "event")) %>% 
+  filter(!is.na(soc)) %>%
+  group_by(MEET_NAME, race_date, gender, event) %>%
+  mutate(
+    weighted_finish = case_when(
+      is.finite((max(place_behind_winner, na.rm = T) - place_behind_winner) / max(place_behind_winner, na.rm = T)) ~ 
+        (max(place_behind_winner, na.rm = T) - place_behind_winner) / max(place_behind_winner, na.rm = T),
+      T ~ 1
+    ),
+    weighted_finish_time = (time_behind_winner / min(TIME, na.rm = T)),
+    weighted_time = 1- ((TIME - month_best_time) / month_best_time),
+    weighted_overall_time = 1 - ((TIME - c_month_best_time) / c_month_best_time),
+    weighted_daily_time = 1 - ((TIME - prev_c_day_best_time) / prev_c_day_best_time)
+  ) %>%
+  ungroup() %>%
+  mutate(
+    rpi = ((soc / 100) * weighted_finish) * 1 + (1 - weighted_finish_time) * (soc / 100) * 2 + (weighted_overall_time) * 7,
+    rpi_v2 = (1 - weighted_finish_time) * (soc / 100) * 1 + ((weighted_daily_time) * 8) + (1 * (weighted_finish * (soc / 100)))
+  ) %>%
+  mutate(
+    race_key = paste0(NAME, "-", event, "-", race_date, "-", TIME, "-", is_prelim)
+  ) %>%
+  distinct(race_key, .keep_all = TRUE)
+```
+
+```{r}
+# Create rolling, previous, and cumulative RPI values
+raceDets <- raceDets %>%
+  group_by(gender, NAME, TEAM, event) %>%
+  arrange(race_date, .by_group = TRUE) %>%
+  mutate(
+    prev_rpi = lag(rpi, na.rm = T),
+    c_rpi = cummean(rpi)
+  )
+```
+
+```{r}
+# Use weighted times to create SOC v2
+socV2 <- raceDets %>%
+  group_by(MEET_NAME, race_date, gender, event, competition_year) %>%
+  summarise(
+    avg_top_weight = mean(weighted_daily_time[meet_evnt_rank <= 4], na.rm = T),
+    med_top_weight = median(weighted_daily_time[meet_evnt_rank <= 4], na.rm = T),
+    n_runners = n_distinct(NAME),
+    winning_time_weight = max(weighted_daily_time, na.rm = T),
+    soc_v1 = max(soc, na.rm = T)
+  ) %>%
+  filter(
+    n_runners > 1
+  ) %>%
+  mutate(
+    soc_v2 = (avg_top_weight * soc_v1) + (winning_time_weight * soc_v1)
+  )
+```
+
+```{r}
+raceSOCv2 <- raceDets %>%
+  left_join(socV2, by = c("race_date", "MEET_NAME", "gender", "competition_year", "event")) %>%
+  mutate(
+    rpi_v3 = (rpi_v2 * avg_top_weight) + (rpi_v2 * (soc_v2 / 20)) + (weighted_daily_time * 80)
+  )
+```
+
+## Test Table
+### RPI
+```{r}
+pal_hex <- c("#762a83", "#af8dc3", "#e7d4e8", "#f7f7f7",
+             "#d9f0d3", "#7fbf7b", "#1b7837")
+
+rows <- 50
+div <- "D1"
+
+tab <- raceDets %>%
+  mutate(
+    rpi = round(rpi, 4)
+  ) %>%
+  filter(
+   DIVISION == div & gender == "M" & competition_year >= 2015 & event %in% c("Mile", "800m", "3000m", "5k", "1500m", "10k", "3000S")
+  ) %>%
+  ungroup() %>% 
+  funique() %>%
+  slice_max(n = rows, order_by = rpi) %>%
+  select(
+    NAME, TEAM, DIVISION, MEET_NAME, race_date, event, PL, clean_time, rpi
+  ) %>%
+  gt::gt() %>% 
+  cols_label(NAME = "Athlete", TEAM = "School", DIVISION = "Division", MEET_NAME = "Meet", 
+             race_date = "Date", event = "Event", PL = "Place", clean_time = "Time", rpi = "RPI") %>% 
+  gt::data_color(
+    columns = rpi, 
+    colors = scales::col_numeric(
+      palette = pal_hex,
+      domain = range(rpi)
+      )
+    ) %>% #, colors = hulk_pal) %>%
+  gtExtras::gt_theme_538() %>%
+  gt::tab_header(title = paste(glue::glue("Top {rows} Performances by NCAA {div} Men Since 2016 Based on RPI"))) %>%
+  gt::tab_source_note(gt::md(glue::glue('**Notes**: @ivanxcky | RPI is Race Performance Index | Data as of {lubridate::today()}'))) %>%
+  tab_options(data_row.padding = px(2)) %>%
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(columns = c(1:2, 6, 8:9))
+  ) %>%
+  fmt_number(columns = c(9), decimals = 3) %>%
+  fmt_missing(columns = everything(), rows = everything(), missing_text = " ") %>%
+  tab_style(
+    style = list(
+      cell_fill(color = "white")
+    ),
+    locations = cells_body(
+      columns = 9,
+      rows = ((rows+1) / 2) - 0.5
+    )
+  )
+
+tab
+
+# tab %>%
+#   gtsave("w_D1_rpi_16_22_all.png")
+```
+
+### RPI v2
+```{r}
+pal_hex <- c("#762a83", "#af8dc3", "#e7d4e8", "#f7f7f7",
+             "#d9f0d3", "#7fbf7b", "#1b7837")
+
+rows <- 30
+div <- "D1"
+
+tab <- raceDets %>%
+  mutate(
+    rpi_v2 = round(rpi_v2, 4)
+  ) %>%
+  mutate(
+    TEAM = str_to_title(TEAM)
+  ) %>%
+  filter(
+   DIVISION == div & gender == "M" & competition_year >= 2015 & event %in% c("800m", "3000m", "5k", "1500m", "10k", "3000S", "Mile")
+  ) %>%
+  funique() %>%
+  ungroup() %>%
+  slice_max(n = rows, order_by = rpi_v2) %>%
+  select(
+    NAME, TEAM, DIVISION, MEET_NAME, year, race_date, event, PL, clean_time, rpi_v2
+  ) %>%
+  gt::gt() %>% 
+  cols_label(NAME = "Athlete", TEAM = "School", DIVISION = "Division", MEET_NAME = "Meet", year = "Year",
+             race_date = "Date", event = "Event", PL = "Place", clean_time = "Time", rpi_v2 = "RPI") %>% 
+  gt::data_color(
+    columns = rpi_v2, 
+    colors = scales::col_numeric(
+      palette = pal_hex,
+      domain = range(rpi_v2)
+      )
+    ) %>% #, colors = hulk_pal) %>%
+  gtExtras::gt_theme_538() %>%
+  gt::tab_header(title = paste(glue::glue("Top {rows} Performances by NCAA {div} Men Since 2015 Based on RPI"))) %>%
+  gt::tab_source_note(gt::md(glue::glue('**Notes**: @ivanxcky | RPI is Race Performance Index | Data as of {lubridate::today()}'))) %>%
+  tab_options(data_row.padding = px(2)) %>%
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(columns = c(1:2, 5, 9:10))
+  ) %>%
+  fmt_number(columns = c(10), decimals = 3) %>%
+  fmt_missing(columns = everything(), rows = everything(), missing_text = " ") %>%
+  tab_style(
+    style = list(
+      cell_fill(color = "white")
+    ),
+    locations = cells_body(
+      columns = 10,
+      rows = ((rows+1) / 2) - 0.5
+    )
+  )
+
+tab
+
+tab %>%
+  gtsave("m_D1_rpi_16_22_all.png")
+```
+
+### RPI v3
+```{r}
+pal_hex <- c("#762a83", "#af8dc3", "#e7d4e8", "#f7f7f7",
+             "#d9f0d3", "#7fbf7b", "#1b7837")
+
+rows <- 50
+div <- "D1"
+
+tab <- raceSOCv2 %>%
+  mutate(
+    rpi_v3 = round(rpi_v3, 4)
+  ) %>%
+  mutate(
+    TEAM = str_to_title(TEAM)
+  ) %>%
+  filter(
+   DIVISION == div & gender == "M" & competition_year >= 2015 & event %in% c("Mile", "800m", "3000m", "5k", "1500m", "10k", "3000S")
+  ) %>%
+  ungroup() %>%
+  slice_max(n = rows, order_by = rpi_v3) %>%
+  select(
+    NAME, TEAM, DIVISION, MEET_NAME, race_date, event, PL, clean_time, rpi_v3
+  ) %>%
+  gt::gt() %>% 
+  cols_label(NAME = "Athlete", TEAM = "School", DIVISION = "Division", MEET_NAME = "Meet", 
+             race_date = "Date", event = "Event", PL = "Place", clean_time = "Time", rpi_v3 = "RPI") %>% 
+  gt::data_color(
+    columns = rpi_v3, 
+    colors = scales::col_numeric(
+      palette = pal_hex,
+      domain = range(rpi_v3)
+      )
+    ) %>% #, colors = hulk_pal) %>%
+  gtExtras::gt_theme_538() %>%
+  gt::tab_header(title = paste(glue::glue("Top {rows} Performances by NCAA {div} Men Since 2016 Based on RPI"))) %>%
+  gt::tab_source_note(gt::md(glue::glue('**Notes**: @ivanxcky | RPI is Race Performance Index | Data as of {lubridate::today()}'))) %>%
+  tab_options(data_row.padding = px(2)) %>%
+  tab_style(
+    style = list(cell_text(weight = "bold")),
+    locations = cells_body(columns = c(1:2, 6, 8:9))
+  ) %>%
+  fmt_number(columns = c(9), decimals = 3) %>%
+  fmt_missing(columns = everything(), rows = everything(), missing_text = " ") %>%
+  tab_style(
+    style = list(
+      cell_fill(color = "white")
+    ),
+    locations = cells_body(
+      columns = 9,
+      rows = ((rows+1) / 2) - 0.5
+    )
+  )
+
+tab
+
+# tab %>%
+#   gtsave("w_D1_rpi_16_22_all.png")
+```

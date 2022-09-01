@@ -8,6 +8,7 @@ library(DBI)
 library(RSQLite)
 library(reshape2)
 library(stringr)
+library(stringi)
 library(yaml)
 library(rvest)
 
@@ -462,7 +463,7 @@ getTeamRosterDf <- function(teamUrl) {
 }
 
 # Function to create a calendar based on starting and ending dates
-genCal <- function(startDate = "2012-01-01") {
+genCal <- function(startDate = "2009-01-01") {
   # Create calendar
   cal <- as.data.frame(seq(lubridate::ymd(startDate), lubridate::today(), by = "day"))
   # Rename columns
@@ -611,4 +612,238 @@ getEventLinks <- function(url) {
   
   # Return links
   return(eventLinks)
+}
+
+getEventLinksPar <- function(links) {
+  # Detect cores
+  cores <- detectCores()
+  cl <- makeCluster(cores[1], outfile = '/Users/samivanecky/git/runneR/scrapeR/scraperErrors.txt')
+  registerDoParallel(cl)
+  
+  event_links <- vector()
+  
+  event_links <- foreach(i=1:length(links), .combine = c, .errorhandling = "remove", .verbose = TRUE, .inorder = FALSE, .init = event_links) %dopar% {
+    
+    # Source file
+    source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
+    
+    # Check URL validity
+    if(class(try(links[i] %>%
+                 GET(., timeout(30), user_agent(randUsrAgnt())) %>%
+                 read_html()))[1] == 'try-error') {
+      next
+    }
+    
+    # Get runner URLs
+    tempEventLinks <- tryCatch({
+      # Get runner
+      tempEventLinks <- getEventLinks(links[i])
+    },  
+    error=function(cond) {
+      message("Here's the original error message:")
+      message(cond)
+      # Sys.sleep(60)
+      return(NA)
+    })
+    
+    # Return value
+    return(tempEventLinks)
+    
+  }
+  
+  stopCluster(cl)
+  
+  # Return data
+  return(event_links)
+}
+
+# Get meet results in parallel
+getTrackMeetResPar <- function(links) {
+  # Init DF
+  # Create a temporary dataframe for runner line item performance
+  meet_res <- as.data.frame(cbind(-1, "name", "year", "team", -999, "race name", "meet dt", "meet loc", "meet name"))
+  # Rename columns
+  names(meet_res) <- c("PL", "NAME", "YEAR", "TEAM", "TIME", "RACE_NAME", "MEET_DATE", "MEET_LOCATION", "MEET_NAME")
+  
+  # Detect cores
+  cores <- detectCores()
+  cl <- makeCluster(cores[1], outfile = '/Users/samivanecky/git/runneR/scrapeR/scraperErrors.txt')
+  registerDoParallel(cl)
+  
+  # Parallel code
+  meet_res <- foreach(i=1:length(links), .combine = rbind, .errorhandling = "remove", .verbose = TRUE, .inorder = FALSE, .init = meet_res) %dopar% {
+    
+    # Source file
+    source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
+    
+    # Try and get results
+    temp_res <- tryCatch({
+        getEventResults(links[i])
+      }, 
+      error=function(cond) {
+        message("Here's the original error message:")
+        message(cond)
+        # Sys.sleep(60)
+        return(NA)
+      })
+    
+    # Return value
+    return(temp_res)
+  }
+  
+  stopCluster(cl)
+  
+  # Return data
+  return(meet_res)
+}
+
+# Get meet results in parallel
+getTrackMeetInfoPar <- function(links) {
+  # Init DF
+  # Create a temporary dataframe for runner line item performance
+  meet_info <- as.data.frame(cbind("meet_name", "meet_date", "meet_fac", "meet_trk_sz"))
+  # Rename columns
+  names(meet_info) <- c("MEET_NAME", "MEET_DATE", "MEET_FACILITY", "MEET_TRACK_SZ")
+  # Convert columns
+  meet_info <- meet_info %>%
+    mutate(
+      MEET_NAME = as.character(MEET_NAME),
+      MEET_DATE = as.character(MEET_DATE),
+      MEET_FACILITY = as.character(MEET_FACILITY),
+      MEET_TRACK_SZ = as.character(MEET_TRACK_SZ)
+    )
+  
+  # Detect cores
+  cores <- detectCores()
+  cl <- makeCluster(cores[1], outfile = '/Users/samivanecky/git/runneR/scrapeR/scraperErrors.txt')
+  registerDoParallel(cl)
+  
+  # Parallel code
+  meet_info <- foreach(i=1:length(links), .combine = rbind, .errorhandling = "remove", .verbose = TRUE, .inorder = FALSE, .init = meet_info) %dopar% {
+    
+    # Source file
+    source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
+    
+    # Try and get result
+    temp_info <- tryCatch({
+      getTrackMeetInfo(links[i])
+    }, 
+    error=function(cond) {
+      message("Here's the original error message:")
+      message(cond)
+      # Sys.sleep(60)
+      return(NA)
+    })
+    
+    # Return value
+    return(temp_info)
+  }
+  
+  stopCluster(cl)
+  
+  # Return data
+  return(meet_info)
+}
+
+getTrackMeetInfo <- function(link) {
+  # Go through meets and get dates
+  tempUrl = link
+  
+  if(class(try(tempUrl %>%
+               GET(., timeout(30), user_agent(randUsrAgnt())) %>%
+               read_html()))[1] == 'try-error') {
+    print(paste0("Failed to get data for : ", tempUrl)) 
+    errorLinks <- append(errorLinks, tempUrl)
+    next
+  }
+  
+  # Get html txt
+  tempHtml <- tempUrl %>%
+    GET(., timeout(30)) %>%
+    read_html() 
+  
+  tempFacilityTxt <- tempHtml %>%
+    html_nodes(xpath = "/html/body/div[3]/div/div/div[2]/div/div[1]/div[1]/div[3]") %>%
+    html_text()
+  
+  tempTrackSize <- tempHtml %>%
+    html_nodes(xpath = "/html/body/div[3]/div/div/div[2]/div/div[1]/div[1]/div[4]") %>%
+    html_text()
+  
+  tempTxt <- tempHtml %>%
+    html_nodes(xpath = "/html/body/div[3]/div/div/div[2]/div/div[1]/div[1]/div[1]") %>%
+    html_text()
+  
+  tempMeetName <- tempHtml %>%
+    html_nodes(xpath = "/html/body/div[3]/div/div/div[1]/h3") %>%
+    html_text()
+  
+  # Drop new line char, etc
+  tempTxt <- gsub("[[:space:]]", "", tempTxt)
+  
+  # Get year
+  tempYr <- case_when(
+    grepl('2005', tempTxt) ~ '2005',
+    grepl('2006', tempTxt) ~ '2006',
+    grepl('2007', tempTxt) ~ '2007',
+    grepl('2008', tempTxt) ~ '2008',
+    grepl('2009', tempTxt) ~ '2009',
+    grepl('2010', tempTxt) ~ '2010',
+    grepl('2011', tempTxt) ~ '2011',
+    grepl('2012', tempTxt) ~ '2012',
+    grepl('2013', tempTxt) ~ '2013',
+    grepl('2014', tempTxt) ~ '2014',
+    grepl('2015', tempTxt) ~ '2015',
+    grepl('2016', tempTxt) ~ '2016',
+    grepl('2017', tempTxt) ~ '2017',
+    grepl('2018', tempTxt) ~ '2018',
+    grepl('2019', tempTxt) ~ '2019',
+    grepl('2020', tempTxt) ~ '2020',
+    grepl('2021', tempTxt) ~ '2021',
+    grepl('2022', tempTxt) ~ '2022',
+    grepl('2023', tempTxt) ~ '2023',
+    T ~ 'OTHER'
+  )
+  
+  # Get day number
+  tempDay <- stri_extract_first_regex(tempTxt, "[0-9]+")
+  
+  # Get month
+  tempMon <- case_when(
+    grepl("Jan", tempTxt) ~ '1',
+    grepl('Feb', tempTxt) ~ '2',
+    grepl('Mar', tempTxt) ~ '3',
+    grepl("Apr", tempTxt) ~ '4',
+    grepl('May', tempTxt) ~ '5',
+    grepl('Jun', tempTxt) ~ '6',
+    grepl('Jul', tempTxt) ~ '7',
+    grepl('Aug', tempTxt) ~ '8',
+    grepl('Sep', tempTxt) ~ '9',
+    grepl('Oct', tempTxt) ~ '10',
+    grepl('Nov', tempTxt) ~ '11',
+    grepl('Dec', tempTxt) ~ '12',
+    T ~ '0'
+  )
+  
+  # Combine into date
+  tempDt <- paste0(tempYr, "-", tempMon, "-", tempDay)
+  
+  # Check for NULLs
+  tempFacilityTxt <- ifelse(identical(tempFacilityTxt, character(0)), "no location", tempFacilityTxt)
+  
+  tempTrackSize <- ifelse(identical(tempTrackSize, character(0)), "no location", tempTrackSize)
+  
+  # Create as dataframe
+  temp_info <- as.data.frame(cbind(tempMeetName, tempDt, tempFacilityTxt, tempTrackSize))
+  names(temp_info) <- c("MEET_NAME", "MEET_DATE", "MEET_FACILITY", "MEET_TRACK_SZ")
+  temp_info <- temp_info %>%
+    mutate(
+      MEET_NAME = as.character(MEET_NAME),
+      MEET_DATE = as.character(MEET_DATE),
+      MEET_FACILITY = as.character(MEET_FACILITY),
+      MEET_TRACK_SZ = as.character(MEET_TRACK_SZ)
+    )
+  
+  # Return data
+  return(temp_info)
 }

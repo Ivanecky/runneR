@@ -99,9 +99,14 @@ res_sub <- data.table::as.data.table(res_sub)
 
 res_sub <- res_sub %>%
   mutate.(
+    NAME = str_squish(NAME),
+    RACE_NAME = str_squish(RACE_NAME)
+  ) %>%
+  mutate.(
     # Prelim
     is_prelim = case_when(
       grepl("prelim|heats", RACE_NAME, ignore.case = TRUE) ~ 1,
+      grepl("prelim", MEET_NAME, ignore.case = TRUE) ~ 1,
       T ~ 0
     ),
     # Race distance
@@ -290,6 +295,21 @@ res_$track_size = ifelse(res_$track_size == "", "400m", res_$track_size)
 res_$banked_or_flat = ifelse(res_$banked_or_flat == "", "flat", res_$banked_or_flat)
 ```
 
+### Handle "Bad" Meet Data from Scraping
+```{r}
+res_ <- res_ %>%
+  mutate.(
+    banked_or_flat = case_when(
+      !(month %in% c("11", "12", "1", "2", "3")) ~ 'flat',
+      T ~ banked_or_flat
+    ),
+    track_size = case_when(
+      !(month %in% c("11", "12", "1", "2", "3")) ~ '400m',
+      T ~ track_size
+    )
+  )
+```
+
 ```{r}
 res_ <- res_ %>%
   mutate.(
@@ -303,7 +323,7 @@ res_ <- res_ %>%
     )
   ) %>%
   mutate.(
-    elevation = as.numeric(elevation)
+    elevation = ifelse(is.na(as.numeric(elevation)), 0, as.numeric(elevation))
   ) %>%
   filter(!is.na(elevation))
 ```
@@ -359,7 +379,7 @@ res_ <- res_ %>%
 res_ <- as.data.frame(res_)
 
 # Upload
-# dbRemoveTable(pg, "meet_results_dets")
+dbRemoveTable(pg, "meet_results_dets")
 dbCreateTable(pg, "meet_results_dets", res_)
 dbWriteTable(pg, "meet_results_dets", res_, append = TRUE)
 ```
