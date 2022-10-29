@@ -1,6 +1,6 @@
 # Functions used in scraping data off of the TFFRS web page
 
-library(tidymodels)
+library(tidyverse)
 library(httr)
 library(dplyr)
 library(jsonlite)

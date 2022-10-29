@@ -1,5 +1,5 @@
 # Code to generate line item performances from TFRRS.
-library(tidymodels)
+library(tidyverse)
 library(httr)
 library(dplyr)
 library(jsonlite)
@@ -42,28 +42,117 @@ getRunnerURLs <- function(url) {
   return(runners)
 }
 
-getMeetLinks <- function(url = "https://www.tfrrs.org/results_search.html") {
-  # Get runner links
-  meets <- url %>%
+getMeetLinks <- function() {
+  meet_links <- c()
+  
+  for (i in 1:1000) {
+    # Status
+    print(paste0("Getting data for page ", i))
+    
+    # Set URL
+    temp_url <- paste0("https://tfrrs.org/results_search.html?page=", i)
+    
+    # Read HTML data
+    temp_links <- temp_url %>%
+      GET(., timeout(30)) %>%
+      read_html() %>%
+      html_nodes(xpath = "//tr/td/a") %>%
+      html_attr("href")
+    
+    # Check if results are returned
+    if (length(temp_links) == 0) {
+      break
+    }
+    
+    # Fix formatting
+    for ( i in 1:length(temp_links) )
+    {
+      if(!grepl("http", temp_links[i])) {
+        temp <- temp_links[i]
+        temp <- paste0("https://tfrrs.org/", temp)
+        temp <- gsub("[[:space:]]", "", temp)
+        temp_links[i] <- temp
+      }
+    }
+    
+    # Append links to list
+    meet_links <- append(meet_links, temp_links)
+  }
+  
+  # Return
+  return(meet_links)
+}
+
+getCurrentMeetLinks <- function() {
+  # Empty vector
+  meet_links <- c()
+  
+  # Get default home page
+  url <- "https://www.tfrrs.org/results_search.html"
+  
+  # Read HTML data
+  temp_links <- url %>%
     GET(., timeout(30)) %>%
     read_html() %>%
     html_nodes(xpath = "//tr/td/a") %>%
     html_attr("href")
   
-  # Manipulate strings
-  for ( i  in 1:length(meets) )
+  # Check if results are returned
+  if (length(temp_links) == 0) {
+    break
+  }
+  
+  # Fix formatting
+  for ( i in 1:length(temp_links) )
   {
-    if(!grepl("http", meets[i])) {
-      temp <- meets[i]
-      temp <- paste0("https:", temp)
+    if(!grepl("http", temp_links[i])) {
+      temp <- temp_links[i]
+      temp <- paste0("https://tfrrs.org/", temp)
       temp <- gsub("[[:space:]]", "", temp)
-      # temp <- paste0(substr(temp, 1, nchar(temp)-3), "tml")
-      meets[i] <- temp
+      temp_links[i] <- temp
     }
   }
   
+  # Append links to list
+  meet_links <- append(meet_links, temp_links)
+  
+  
+  for (i in 1:100) {
+    # Status
+    print(paste0("Getting data for page ", i))
+    
+    # Set URL
+    temp_url <- paste0("https://tfrrs.org/results_search.html?page=", i)
+    
+    # Read HTML data
+    temp_links <- temp_url %>%
+      GET(., timeout(30)) %>%
+      read_html() %>%
+      html_nodes(xpath = "//tbody/tr/td/a") %>%
+      html_attr("href")
+    
+    # Check if results are returned
+    if (length(temp_links) == 0) {
+      break
+    }
+    
+    # Fix formatting
+    for ( i in 1:length(temp_links) )
+    {
+      if(!grepl("http", temp_links[i])) {
+        temp <- temp_links[i]
+        temp <- paste0("https://tfrrs.org", temp)
+        temp <- gsub("[[:space:]]", "", temp)
+        temp_links[i] <- temp
+      }
+    }
+    
+    # Append links to list
+    meet_links <- append(meet_links, temp_links)
+  }
+  
   # Return
-  return(meets)
+  return(meet_links)
 }
 
 getPLMeetLinks <- function(url) {
@@ -846,4 +935,157 @@ getTrackMeetInfo <- function(link) {
   
   # Return data
   return(temp_info)
+}
+
+# Get XC results
+getXCResults <- function(url) {
+  
+  if(class(try(url %>%
+               GET(., timeout(30), user_agent(randUsrAgnt())) %>%
+               read_html()))[1] == 'try-error') {
+    print(paste0("Failed to get data for : ", url)) 
+    break
+  }
+  
+  # Get html in one call
+  temp_html <- url %>%
+    GET(., timeout(30), user_agent(randUsrAgnt())) %>%
+    read_html()
+  
+  tbls <- temp_html %>%
+    html_table()
+  
+  # Get headers
+  hdrs <- temp_html %>%
+    html_nodes("h3") %>%
+    html_text()
+  
+  # Clean up headers
+  hdrs <- gsub("[\r\n]", "", hdrs)
+  hdrs <- hdrs[grepl("result", hdrs, ignore.case = T)]
+  
+  # Get meet name
+  meet_name <- url %>%
+    read_html() %>%
+    html_node(xpath = "/html/body/div[3]/div/div/div[1]/h3") %>%
+    html_text()
+  
+  # Clean up meet name
+  meet_name = trimws(gsub("[\r\n]", "", meet_name))
+  
+  # Get meet date
+  meet_dt <- temp_html %>%
+    html_node(xpath = "/html/body/div[3]/div/div/div[2]/div[1]/div/div/div/div[1]") %>%
+    html_text()
+  
+  # Drop new line char, etc
+  meet_dt <- gsub("[[:space:]]", "", meet_dt)
+  
+  # Get year
+  tempYr <- case_when(
+    grepl('2005', meet_dt) ~ '2005',
+    grepl('2006', meet_dt) ~ '2006',
+    grepl('2007', meet_dt) ~ '2007',
+    grepl('2008', meet_dt) ~ '2008',
+    grepl('2009', meet_dt) ~ '2009',
+    grepl('2010', meet_dt) ~ '2010',
+    grepl('2011', meet_dt) ~ '2011',
+    grepl('2012', meet_dt) ~ '2012',
+    grepl('2013', meet_dt) ~ '2013',
+    grepl('2014', meet_dt) ~ '2014',
+    grepl('2015', meet_dt) ~ '2015',
+    grepl('2016', meet_dt) ~ '2016',
+    grepl('2017', meet_dt) ~ '2017',
+    grepl('2018', meet_dt) ~ '2018',
+    grepl('2019', meet_dt) ~ '2019',
+    grepl('2020', meet_dt) ~ '2020',
+    grepl('2021', meet_dt) ~ '2021',
+    grepl('2022', meet_dt) ~ '2022',
+    grepl('2023', meet_dt) ~ '2023',
+    T ~ 'OTHER'
+  )
+  
+  # Get day number
+  tempDay <- stri_extract_first_regex(meet_dt, "[0-9]+")
+  
+  # Get month
+  tempMon <- case_when(
+    grepl("Jan", meet_dt) ~ '1',
+    grepl('Feb', meet_dt) ~ '2',
+    grepl('Mar', meet_dt) ~ '3',
+    grepl("Apr", meet_dt) ~ '4',
+    grepl('May', meet_dt) ~ '5',
+    grepl('Jun', meet_dt) ~ '6',
+    grepl('Jul', meet_dt) ~ '7',
+    grepl('Aug', meet_dt) ~ '8',
+    grepl('Sep', meet_dt) ~ '9',
+    grepl('Oct', meet_dt) ~ '10',
+    grepl('Nov', meet_dt) ~ '11',
+    grepl('Dec', meet_dt) ~ '12',
+    T ~ '0'
+  )
+  
+  # Combine into date
+  meet_dt <- paste0(tempYr, "-", tempMon, "-", tempDay)
+  
+  # Wrap this all in a loop
+  for (i in 1:length(tbls)) {
+    # Convert to df
+    temp_df <- as.data.frame(tbls[i])
+    # Check if individual or team df
+    if(any("X1"== colnames(temp_df))) {
+      # Team data
+      if(!exists("team_df")) {
+        # Subset columns
+        temp_df <- temp_df %>%
+          select(PL, Team, X1, X2, X3, X4, X5, X6, X7, Score, `Avg..Time`, `Total.Time`)
+        # Assign race name
+        temp_df$RACE_TYPE = hdrs[i]
+        # Create dataframe
+        team_df <- temp_df
+      } else {
+        # Subset columns
+        temp_df <- temp_df %>%
+          select(PL, Team, X1, X2, X3, X4, X5, X6, X7, Score, `Avg..Time`, `Total.Time`)
+        # Assign race type
+        temp_df$RACE_TYPE = hdrs[i]
+        # Create dataframe
+        # team_df <- rbind(team_df, temp_df)
+        team_df <- rbind(team_df, temp_df)
+      }
+    } else {
+      # Individual data
+      if(!exists("ind_df")) {
+        # Subset data
+        temp_df <- temp_df %>%
+          select(PL, NAME, TEAM, YEAR, TIME, SCORE)
+        # Assign race type
+        temp_df$RACE_TYPE = hdrs[i]
+        # Create df
+        ind_df <- temp_df
+      } else {
+        # Subset data
+        temp_df <- temp_df %>%
+          select(PL, NAME, TEAM, YEAR, TIME, SCORE)
+        # Assign race type
+        temp_df$RACE_TYPE = hdrs[i]
+        # Create df
+        # ind_df <- rbind(ind_df, temp_df)
+        ind_df <- rbind(ind_df, temp_df)
+      }
+    }
+  }
+  
+  # Add meet name and date to tables
+  team_df$MEET_NAME = meet_name
+  team_df$MEET_DT = meet_dt
+  ind_df$MEET_NAME = meet_name
+  ind_df$MEET_DT = meet_dt
+  
+  # Convert output to list
+  output <- list("teams" = team_df, "individuals" = ind_df)
+  
+  # Return
+  return(output)
+  
 }

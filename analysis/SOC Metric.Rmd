@@ -508,7 +508,7 @@ tab
 pal_hex <- c("#762a83", "#af8dc3", "#e7d4e8", "#f7f7f7",
              "#d9f0d3", "#7fbf7b", "#1b7837")
 
-rows <- 30
+rows <- 50
 div <- "D1"
 
 tab <- raceDets %>%
@@ -519,7 +519,7 @@ tab <- raceDets %>%
     TEAM = str_to_title(TEAM)
   ) %>%
   filter(
-   DIVISION == div & gender == "M" & competition_year >= 2015 & event %in% c("800m", "3000m", "5k", "1500m", "10k", "3000S", "Mile")
+   DIVISION == div & gender == "F" & competition_year == 2022 & event %in% c("800m", "3000m", "5k", "1500m", "10k", "3000S", "Mile")
   ) %>%
   funique() %>%
   ungroup() %>%
@@ -538,7 +538,7 @@ tab <- raceDets %>%
       )
     ) %>% #, colors = hulk_pal) %>%
   gtExtras::gt_theme_538() %>%
-  gt::tab_header(title = paste(glue::glue("Top {rows} Performances by NCAA {div} Men Since 2015 Based on RPI"))) %>%
+  gt::tab_header(title = paste(glue::glue("Top {rows} Performances by NCAA {div} Women in 2022 Based on RPI"))) %>%
   gt::tab_source_note(gt::md(glue::glue('**Notes**: @ivanxcky | RPI is Race Performance Index | Data as of {lubridate::today()}'))) %>%
   tab_options(data_row.padding = px(2)) %>%
   tab_style(
@@ -620,4 +620,27 @@ tab
 
 # tab %>%
 #   gtsave("w_D1_rpi_16_22_all.png")
+```
+
+# RPI & SOC Analysis
+## Agg Results
+```{r}
+rnr_agg <- raceDets %>%
+  filter(
+    event %in% c("Mile", "800m", "3000m", "5k", "1500m", "10k", "3000S"),
+    year >= 2015
+  ) %>%
+  group_by(NAME, TEAM, gender) %>%
+  summarise(
+    avg_rpi = mean(rpi_v2, na.rm = T),
+    med_rpi = median(rpi_v2, na.rm = T),
+    q3_rpi = quantile(rpi_v2, 0.75, na.rm = T),
+    n_races = n_distinct(race_key)
+  ) %>%
+  filter(
+    n_races > 1
+  ) %>%
+  mutate(
+    TEAM = str_to_title(TEAM)
+  )
 ```
