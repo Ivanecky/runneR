@@ -59,8 +59,16 @@ getCurrentRegionalRankings <- function(url, gender, div, type = "regional") {
     read_html() %>%
     html_table()
   
-  # Drop last tbl
-  df_tbls <- df_tbls[1:(length(df_tbls) - 1)]
+  # Number of regions differs on division, set tbls by division
+  n_tbls <- case_when(
+    div == "D1" ~ 2,
+    div == "D2" ~ 2,
+    div == "D3" ~ 2,
+    T ~ 0
+  )
+  
+  # Drop last tbls
+  df_tbls <- df_tbls[1:(length(df_tbls) - n_tbls)]
   
   # Read header attrs
   df_hdrs <- url %>%

@@ -339,48 +339,6 @@ getXCRunnerURLs <- function(url) {
   return(runnerURLs)
 }
 
-# Meet results query (XC)
-xcMeetResQuery <- function(meetURL){
-  # Get runner URLs
-  runnerLinks <- getRunnerURLs(meetURL)
-  
-  # Create a temporary dataframe for runner line item performance
-  runner_lines = as.data.frame(cbind("year", "event", 1.1, 1.1, "meet", "meet date", TRUE, "name", "gender", "team_name", "team_division"))
-  # Rename columns
-  names(runner_lines) = c("YEAR", "EVENT", "TIME", "PLACE", "MEET_NAME", "MEET_DATE", "PRELIM", "NAME", "GENDER", "TEAM", "DIVISION")
-  # Reformat var
-  runner_lines <- runner_lines %>%
-    mutate(
-      YEAR = as.character(YEAR),
-      EVENT = as.character(EVENT),
-      TIME = as.numeric(TIME),
-      PLACE = as.numeric(PLACE),
-      NAME = as.character(NAME),
-      GENDER = as.character(GENDER),
-      TEAM = as.character(TEAM)
-    )
-  
-  # Detect cores
-  cores <- detectCores()
-  cl <- makeCluster(cores[1] - 1, outfile = '/Users/samivanecky/git/TrackPowerRankings/scraperErrors.txt')
-  registerDoParallel(cl)
-  
-  runner_lines <- foreach(i=1:length(runnerLinks), .combine = rbind) %dopar% {
-    
-    source("/Users/samivanecky/git/TrackPowerRankings/scrapeR/meetScrapingFxns.R")
-    
-    # Make function call
-    runner_temp <- getRunner(runnerLinks[i])
-    
-    runner_temp
-  }
-  
-  stopCluster(cl)
-  
-  # Return data
-  return(runner_lines)
-}
-
 # Indoor meet results query
 trackRunnerURLQuery <- function(meetUrls) {
   
@@ -1088,4 +1046,88 @@ getXCResults <- function(url) {
   # Return
   return(output)
   
+}
+
+# function to get team links for team info
+getTeamLinks <- function(url) {
+  # Select rand usr
+  ru <- randUsrAgnt()
+  
+  if(class(try(url %>%
+               GET(., timeout(30), user_agent(ru)) %>%
+               read_html()))[1] == 'try-error') {
+    print(paste0("Failed to get data for : ", url)) 
+    break
+  }
+  
+  # Get html in one call
+  temp_html <- url %>%
+    GET(., timeout(30), user_agent(ru)) %>%
+    read_html()
+  
+  # Get all href fields
+  refs <- temp_html %>%
+    html_nodes(xpath = "//tr/td/a") %>%
+    html_attr("href")
+  
+  # Subset to teams
+  refs <- refs[grepl("teams", refs)]
+  
+  # Return URLs
+  return(refs)
+}
+
+getTeamDiv <- function(url) {
+  # Select rand usr
+  ru <- randUsrAgnt()
+  
+  if(class(try(url %>%
+               GET(., timeout(30), user_agent(ru)) %>%
+               read_html()))[1] == 'try-error') {
+    print(paste0("Failed to get data for : ", url)) 
+    break
+  }
+  
+  # Assign gender
+  gender <- case_when(
+    grepl('college_f', url) ~ "F",
+    grepl('college_m', url) ~ "M",
+    T ~ "other"
+  )
+  
+  # Navigate to link
+  temp_team <- url %>%
+    GET(., timeout(30), user_agent(ru)) %>%
+    read_html()
+  
+  # Get team name
+  temp_name <- temp_team %>%
+    html_node(xpath = "/html/body/form/div/div/div/div[1]/h3[1]") %>%
+    html_text()
+  
+  # Remove whitespace 
+  temp_name <- trimws(gsub("\\n|\\t", "", temp_name, ignore.case = T))
+  
+  # Read xpath
+  temp_txt <- temp_team %>%
+    html_node(xpath = "/html/body/form/div/div/div/div[2]/div[1]/div[1]/span") %>%
+    html_text() %>%
+    toupper()
+  
+  # Check division
+  temp_div <- case_when(
+    grepl("D1|DI|DIVISION 1", temp_txt, ignore.case = TRUE) & !grepl("D2|DII|DIVISION 2", temp_txt, ignore.case = TRUE) & !grepl("D3|DIII|DIVISION 3", temp_txt, ignore.case = TRUE) ~ "D1",
+    grepl("D2|DII|DIVISION 2", temp_txt, ignore.case = TRUE) & !grepl("D3|DIII|DIVISION 3", temp_txt, ignore.case = TRUE) ~ "D2",
+    grepl("D3|DIII|DIVISION 3", temp_txt, ignore.case = TRUE) ~ "D3",
+    grepl("NAIA", temp_txt, ignore.case = TRUE) ~ "NAIA",
+    grepl("NJCAA", temp_txt, ignore.case = TRUE) ~ "NJCAA",
+    T ~ "other"
+  )
+  
+  # Bind in temp df
+  temp_df <- as.data.frame(cbind(temp_name, temp_div, gender))
+  names(temp_df) <- c("name", "div", "gender")
+  
+  # Return the data
+  return(temp_df)
 }
