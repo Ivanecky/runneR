@@ -17,11 +17,11 @@ library(lubridate)
 library(yaml)
 
 # Load functions
-source("/Users/samivanecky/git/runneR//scrapeR/Scraping_Fxns.R")
+source("/Users/samivanecky/git/runneR/scrapeR/Scraping_Fxns.R")
 
 # Connect to PG
 # Read connection data from yaml
-pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
+pg.yml <- read_yaml("/Users/samivanecky/git/postgres.yaml")
 
 # Connect to database
 pg <- dbConnect(
@@ -38,8 +38,6 @@ ind <- dbGetQuery(pg, "select * from xc_ind_raw where load_d in (select max(load
 
 #########################
 # Clean team data
-# Remove naming prefix
-names(team) <- gsub("teams.",  "", names(team))
 
 # Rename cols
 team <- team %>%
@@ -104,8 +102,6 @@ team$avg_time_numeric = sapply(team$Avg_Time, handleTimes)
 
 ############################
 # Clean individual data
-# Remove naming prefix
-names(ind) <- gsub("individuals.",  "", names(ind))
 
 # Fix data
 ind <- ind %>%
@@ -156,6 +152,10 @@ ind <- ind %>%
 
 # Convert times to numeric
 ind$numeric_time <- sapply(ind$TIME, handleTimes)
+
+# Remove any duplicates
+ind <- ind %>%
+  funique()
 
 # Create time behind winner metric
 ind <- ind %>%
