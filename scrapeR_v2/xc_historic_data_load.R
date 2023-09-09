@@ -31,7 +31,7 @@ source("/Users/samivanecky/git/runneR/scrapeR/altConversinFxns.R")
 url <- "https://www.tfrrs.org/results_search.html"
 
 # Read connection data from yaml
-pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
+pg.yml <- read_yaml("/Users/samivanecky/git/postgres.yaml")
 
 # Connect to database
 pg <- dbConnect(
@@ -55,8 +55,15 @@ scraped_links <- dbGetQuery(pg, "select * from meet_links")
 meet_links <- rbind(meet_links, scraped_links) %>%
   funique()
 
+# Remove double backslash
+meet_links$link <- gsub("org//", "org/", meet_links$link)
+
+# Write these links to the meet_links database so we don't scrape in the future
+# dbRemoveTable(pg, "meet_links")
+# dbWriteTable(pg, "meet_links", meet_links, overwrite = TRUE)
+
 # Convert xc_links to vector 
-xc_links <- xc_links$link
+xc_links <- meet_links$link
 
 # Subset XC links
 xc_links <- xc_links[grepl("xc", xc_links, ignore.case = T)]
