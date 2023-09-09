@@ -25,7 +25,7 @@ source("/Users/samivanecky/git/runneR/scrapeR/altConversinFxns.R")
 url <- "https://www.tfrrs.org/results_search.html"
 
 # Read connection data from yaml
-pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
+pg.yml <- read_yaml("/Users/samivanecky/git/postgres.yaml")
 
 # Connect to database
 pg <- dbConnect(
@@ -90,5 +90,5 @@ teams <- teams %>%
   funique()
 
 # Upload to data frame
-dbCreateTable(pg, "team_divs", teams)
+# dbCreateTable(pg, "team_divs", teams)
 dbWriteTable(pg, "team_divs", teams, overwrite = TRUE)

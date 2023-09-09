@@ -15,8 +15,6 @@ library(zoo)
 library(dplyr)
 library(lubridate)
 library(fastverse)
-library(tidytable)
-library(data.table)
 library(yaml)
 library(arrow)
 library(foreach)
@@ -48,15 +46,18 @@ meet_links <- getMeetLinks()
 # Remove dups
 meet_links <- funique(meet_links)
 
+# Convert to data frame
+meet_links <- as.data.frame(meet_links) %>%
+  rename(
+    "link" = "meet_links"
+  )
+
 # Get already scraped links
 scraped_links <- dbGetQuery(pg, "select * from meet_links")
 
 # Combine the two
 meet_links <- rbind(meet_links, scraped_links) %>%
   funique()
-
-# Remove double backslash
-meet_links$link <- gsub("org//", "org/", meet_links$link)
 
 # Write these links to the meet_links database so we don't scrape in the future
 # dbRemoveTable(pg, "meet_links")
@@ -70,38 +71,6 @@ xc_links <- xc_links[grepl("xc", xc_links, ignore.case = T)]
 
 # Error URLs
 err_urls <- c()
-
-# Convert xc_links to vector 
-xc_links <- xc_links$link
-
-# TEST
-#for (i in 1:length(xc_links)) {
-for (i in 1:length(xc_links)) {
-  # Print status
-  print(paste0("Getting data for: ", xc_links[i], " which is ", i, " of ", length(xc_links)))
-  # Try and get data
-  temp_res <- tryCatch({
-    getXCResults(xc_links[i])
-  }, 
-  error=function(cond) {
-    message("Here's the original error message:")
-    message(cond)
-    err_urls <- append(err_urls, xc_links[i])
-    # Sys.sleep(60)
-    return(NA)
-  })
-  # Check for error
-  if(!any(is.na(temp_res))) {
-    # Append data
-    if(exists("team_tbl")) {
-      team_tbl <- rbind(team_tbl, as.data.frame(temp_res["teams"]))
-      ind_tbl <- rbind(ind_tbl, as.data.frame(temp_res["individuals"]))
-    } else {
-      team_tbl <- as.data.frame(temp_res["teams"])
-      ind_tbl <- as.data.frame(temp_res["individuals"])
-    }
-  }
-}
 
 # Attempt to parallelize the loop
 # Function for running in parallel

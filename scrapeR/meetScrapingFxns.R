@@ -45,7 +45,7 @@ getRunnerURLs <- function(url) {
 getMeetLinks <- function() {
   meet_links <- c()
   
-  for (i in 1:1000) {
+  for (i in 1:2000) {
     # Status
     print(paste0("Getting data for page ", i))
     
@@ -69,7 +69,7 @@ getMeetLinks <- function() {
     {
       if(!grepl("http", temp_links[i])) {
         temp <- temp_links[i]
-        temp <- paste0("https://tfrrs.org/", temp)
+        temp <- paste0("https://tfrrs.org", temp)
         temp <- gsub("[[:space:]]", "", temp)
         temp_links[i] <- temp
       }
@@ -107,7 +107,7 @@ getCurrentMeetLinks <- function() {
   {
     if(!grepl("http", temp_links[i])) {
       temp <- temp_links[i]
-      temp <- paste0("https://tfrrs.org/", temp)
+      temp <- paste0("https://tfrrs.org", temp)
       temp <- gsub("[[:space:]]", "", temp)
       temp_links[i] <- temp
     }
@@ -117,7 +117,7 @@ getCurrentMeetLinks <- function() {
   meet_links <- append(meet_links, temp_links)
   
   
-  for (i in 1:100) {
+  for (i in 1:50) {
     # Status
     print(paste0("Getting data for page ", i))
     

@@ -170,8 +170,15 @@ ind <- ind %>%
   ungroup()
 
 # Get existing data
-ex_teams <- dbGetQuery(pg, "select * from xc_team_dets")
-ex_ind <- dbGetQuery(pg, "select * from xc_ind_dets")
+ex_teams <- dbGetQuery(pg, "select * from xc_team_dets") %>%
+  select(
+    -c(load_d)
+  )
+
+ex_ind <- dbGetQuery(pg, "select * from xc_ind_dets") %>%
+  select(
+    -c(load_d)
+  )
 
 # Drop load date
 team <- team %>%

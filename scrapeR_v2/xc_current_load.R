@@ -25,7 +25,7 @@ source("/Users/samivanecky/git/runneR/scrapeR/altConversinFxns.R")
 url <- "https://www.tfrrs.org/results_search.html"
 
 # Read connection data from yaml
-pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
+pg.yml <- read_yaml("/Users/samivanecky/git/postgres.yaml")
 
 # Connect to database
 pg <- dbConnect(
@@ -39,12 +39,15 @@ pg <- dbConnect(
 # Read meet name links
 meet_links <- getCurrentMeetLinks()
 
-# Remove dups
-meet_links <- funique(meet_links)
-
 # Convert to df
 meet_links <- as.data.frame(meet_links)
 names(meet_links) <- c("link")
+
+# Fix link double backslashes
+meet_links$link <- gsub("org//", "org/", meet_links$link)
+
+# Remove dups
+meet_links <- funique(meet_links)
 
 # Get already scraped links
 scraped_links <- dbGetQuery(pg, "select * from meet_links")
@@ -112,6 +115,13 @@ ind_tbl <- ind_tbl %>%
 # Convert to dataframes
 team_tbl <- as.data.frame(team_tbl)
 ind_tbl <- as.data.frame(ind_tbl)
+
+# Remove extraneous characters on front of column names
+# Remove characters in column names before "teams"
+colnames(team_tbl) <- sub(".*teams\\.", "", colnames(team_tbl))
+
+# Remove characters in column names before "teams"
+colnames(ind_tbl) <- sub(".*individuals\\.", "", colnames(ind_tbl))
 
 # Write to tables
 dbWriteTable(pg, "xc_team_raw", team_tbl, append = TRUE)
