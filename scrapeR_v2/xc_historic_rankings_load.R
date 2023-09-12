@@ -14,7 +14,7 @@ source("/Users/samivanecky/git/runneR/scrapeR/Scraping_Fxns.R")
 source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
 
 # Read connection data from yaml
-pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
+pg.yml <- read_yaml("/Users/samivanecky/git/postgres.yaml")
 
 # Connect to database
 pg <- dbConnect(
@@ -77,6 +77,10 @@ getHistoricRegionalRankings <- function(url, gender, season, div, type = "region
     div == "D3" ~ 2,
     T ~ 0
   )
+  
+  # Check if any tables exist
+  if (length(df_tbls) <= 1)
+    return(NULL)
   
   # Drop last tbls
   df_tbls <- df_tbls[1:(length(df_tbls) - n_tbls)]
@@ -148,7 +152,7 @@ regional_urls <- c(
 )
 
 # Years
-years <- c(2011:2021)
+years <- c(2011:2022)
 
 # Divs
 divs <- c(
@@ -174,11 +178,17 @@ for (i in 1:length(years)) {
     # Get rankings
     if(exists("nat_df")) {
       temp_df <- getHistoricNationalRankings(url = national_urls[j], gender = gender, season = years[i], div = divs[j])
-      temp_df$season = years[i]
-      nat_df <- plyr::rbind.fill(nat_df, temp_df)
+      if(!is.null(temp_df)) {
+        temp_df$season = years[i]
+        nat_df <- plyr::rbind.fill(nat_df, temp_df)
+      } else {
+        print(paste0("Bad data for ", national_urls[j]))
+      }
+      Sys.sleep(30)
     } else {
       nat_df <- getHistoricNationalRankings(url = national_urls[j], gender = gender, season = years[i], div = divs[j])
       nat_df$season = years[i]
+      Sys.sleep(30)
     }
   }
 }
@@ -199,12 +209,18 @@ for (i in 1:length(years)) {
     # Get rankings
     if(exists("regional_df")) {
       temp_df <- getHistoricRegionalRankings(url = regional_urls[j], gender = gender, season = years[i], div = divs[j])
-      temp_df$season = years[i]
-      regional_df <- plyr::rbind.fill(regional_df, temp_df) %>%
-        funique()
+      if(!is.null(temp_df)) {
+        temp_df$season = years[i]
+        regional_df <- plyr::rbind.fill(regional_df, temp_df) %>%
+          funique()
+      } else {
+        print("Skipping iteration...")
+      }
+      Sys.sleep(15)
     } else {
       regional_df <- getHistoricRegionalRankings(url = regional_urls[j], gender = gender, season = years[i], div = divs[j])
       regional_df$season = years[i]
+      Sys.sleep(15)
     }
   }
 }
@@ -215,16 +231,18 @@ nat_df <- nat_df %>%
     -c(X1, X2)
   )
 
-regional_df <- regional_df %>%
-  select(
-    -c(X1, X2)
-  )
+# regional_df <- regional_df %>%
+#   select(
+#     -c(X1, X2)
+#   )
 
 # Upload to dataframe
 # National
+dbRemoveTable(pg, "historic_xc_national_rankings")
 dbCreateTable(pg, "historic_xc_national_rankings", nat_df)
 dbWriteTable(pg, "historic_xc_national_rankings", nat_df, overwrite = TRUE)
 
 # Regional
+dbRemoveTable(pg, "historic_xc_regional_rankings")
 dbCreateTable(pg, "historic_xc_regional_rankings", regional_df)
 dbWriteTable(pg, "historic_xc_regional_rankings", regional_df, overwrite = TRUE)

@@ -14,7 +14,7 @@ source("/Users/samivanecky/git/runneR/scrapeR/Scraping_Fxns.R")
 source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
 
 # Read connection data from yaml
-pg.yml <- read_yaml("/Users/samivanecky/git/runneR/postgres.yaml")
+pg.yml <- read_yaml("/Users/samivanecky/git/postgres.yaml")
 
 # Connect to database
 pg <- dbConnect(
@@ -121,18 +121,18 @@ getCurrentRegionalRankings <- function(url, gender, div, type = "regional") {
 # D1
 m_d1_n_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=1"
 w_d1_n_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=2"
-m_d1_r_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=510&season=2022"
-w_d1_r_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=511&season=2022"
+m_d1_r_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=510"
+w_d1_r_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=511"
 # D2
-m_d2_n_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=489&season=2022"
-w_d2_n_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=488&season=2022"
-m_d2_r_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=516&season=2022"
-w_d2_r_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=517&season=2022"
+m_d2_n_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=489"
+w_d2_n_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=488"
+m_d2_r_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=516"
+w_d2_r_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=517"
 # D3
-m_d3_n_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=490&season=2022"
-w_d3_n_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=491&season=2022"
-m_d3_r_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=522&season=2022"
-w_d3_r_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=523&season=2022"
+m_d3_n_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=490"
+w_d3_n_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=491"
+m_d3_r_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=522"
+w_d3_r_url <- "http://www.ustfccca.org/team-rankings-polls-central/polls-and-rankings-week-by-week?pritype=523"
 
 # Get current rankings
 # D1
@@ -154,6 +154,17 @@ w_d3_reg <- getCurrentRegionalRankings(w_d3_r_url, "F", "D3", "regional")
 # Combine dataframes
 national <- plyr::rbind.fill(m_d1_nat, m_d2_nat, m_d3_nat, w_d1_nat, w_d2_nat, w_d3_nat)
 regional <- plyr::rbind.fill(m_d1_reg, m_d2_reg, m_d3_reg, w_d1_reg, w_d2_reg, w_d3_reg)
+
+# Add current year for appending purposes
+national <- national %>%
+  mutate(
+    yr = year(lubridate::today())
+  )
+
+regional <- regional %>%
+  mutate(
+    yr = year(lubridate::today())
+  )
 
 # Upload to dataframes
 # dbCreateTable(pg, "xc_nat_rank_current", national)
