@@ -1,0 +1,221 @@
+---
+title: "XC Analysis"
+author: "Samuel Ivanecky"
+date: "2023-09-12"
+output: html_document
+---
+
+# Setup
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(fig.width=18, fig.height=10) 
+
+# Code to generate line item performances from TFRRS.
+library(tidymodels)
+library(httr)
+library(jsonlite)
+library(RPostgreSQL)
+library(DBI)
+library(reshape2)
+library(stringr)
+library(stringi)
+library(yaml)
+library(rvest)
+library(kit)
+library(ggthemes)
+library(ggridges)
+library(ggrepel)
+library(ggpubr)
+library(zoo)
+library(gt)
+library(gtExtras)
+library(data.table)
+library(tidytable)
+library(dplyr)
+library(fuzzyjoin)
+
+# Source file for functions
+source("/Users/samivanecky/git/runneR/scrapeR/Scraping_Fxns.R")
+source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
+
+# Read connection data from yaml
+pg.yml <- read_yaml("/Users/samivanecky/git/postgres.yaml")
+
+# Connect to database
+pg <- dbConnect(
+  RPostgres::Postgres(),
+  host = pg.yml$host,
+  user = pg.yml$user,
+  db = pg.yml$database,
+  port = pg.yml$port
+)
+
+reformatTimes <- function(mark) {
+  sec <- str_pad(round((mark %% 60), 2), width = 5, side = "left", pad = "0")
+  min <- floor(mark / 60)
+  min <- ifelse(min == 0, "", min)
+  time <- paste0(min, ":", sec)
+  return(time)
+}
+```
+
+# Query Data
+## XC Results
+### Ind
+```{r}
+ind <- dbGetQuery(pg, 
+"
+
+select
+  *
+from 
+  xc_ind_dets
+
+")
+```
+
+### Team
+```{r}
+team <- dbGetQuery(pg, 
+"
+
+select
+  *
+from 
+  xc_team_dets
+
+")
+```
+
+## Rankings
+### Historic
+#### Regional
+```{r}
+reg_rnk_h <- dbGetQuery(pg, 
+"
+
+select
+  *
+from 
+  historic_xc_regional_rankings
+
+")
+```
+
+```{r}
+reg_rnk_c <- dbGetQuery(pg, 
+"
+
+select
+  *
+from 
+  xc_reg_rank_current
+
+")
+```
+
+#### National
+```{r}
+nat_rnk_h <- dbGetQuery(pg, 
+"
+
+select
+  *
+from 
+  historic_xc_national_rankings
+
+")
+```
+
+```{r}
+nat_rnk_c <- dbGetQuery(pg, 
+"
+
+select 
+  *
+from 
+  xc_nat_rank_current
+
+")
+```
+
+# Preseason vs NCAA Finish
+## Subset NCAA XC
+```{r}
+# Get NCAA meets
+ncaas <- team %>%
+  filter(
+    grepl("NCAA DIVISION|NCAA DI|NCAA DII|NCAA DIII", MEET_NAME, ignore.case = T) & !grepl("REGION", MEET_NAME, ignore.case = T) & grepl("CHAMPIONSHIPS", MEET_NAME, ignore.case = T)
+  ) %>%
+  filter(
+    !(MEET_NAME %in% c("NCAA Division II Midwest Cross Country Championships", "NCAA Division II Central Championships"))
+  ) %>%
+  mutate(
+    MEET_DT = lubridate::ymd(MEET_DT),
+    # Modify the year for the 2020 season because of COVID
+    year = case_when(
+      year == 2021 & month == 3 ~ 2020, 
+      T ~ year
+    )
+  ) 
+```
+
+## Get Preseason Rankings
+### Regional
+```{r}
+# Subset to preseason
+pre_reg <- reg_rnk_h %>%
+  select(
+    Team, Preseason, region, gender, type, div, season
+  )
+
+reg_rnk_c <- reg_rnk_c %>%
+  select(
+    -c(load_dt)
+  ) %>%
+  rename(
+    season = yr
+  )
+
+# Combine in current rankings
+pre_reg <- rbind(pre_reg, reg_rnk_c) %>%
+  rename(
+    preseason_reg = Preseason
+  )
+```
+
+### National
+```{r}
+pre_nat <- nat_rnk_h %>%
+  select(
+    Team, Preseason, gender, type, div, season
+  )
+
+nat_rnk_c <- nat_rnk_c %>%
+  select(
+    -c(load_dt)
+  ) %>%
+  rename(
+    season = yr
+  )
+
+pre_nat <- rbind(pre_nat, nat_rnk_c) %>%
+  rename(
+    preseason_nat = Preseason
+  )
+```
+
+## Join Data
+```{r}
+ncaa_rnk <- ncaas %>%
+  left_join(
+    pre_nat, by = c("Team", "gender", "year" = "season")
+  )
+```
+
+```{r}
+
+```
+
+
+
