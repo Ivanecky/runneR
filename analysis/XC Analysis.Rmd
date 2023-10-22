@@ -8,7 +8,7 @@ output: html_document
 # Setup
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
-knitr::opts_chunk$set(fig.width=18, fig.height=10) 
+knitr::opts_chunk$set(fig.width=24, fig.height=16) 
 
 # Code to generate line item performances from TFRRS.
 library(tidymodels)
@@ -33,6 +33,7 @@ library(data.table)
 library(tidytable)
 library(dplyr)
 library(fuzzyjoin)
+library(stringdist)
 
 # Source file for functions
 source("/Users/samivanecky/git/runneR/scrapeR/Scraping_Fxns.R")
@@ -139,83 +140,313 @@ from
 ")
 ```
 
-# Preseason vs NCAA Finish
-## Subset NCAA XC
-```{r}
-# Get NCAA meets
-ncaas <- team %>%
-  filter(
-    grepl("NCAA DIVISION|NCAA DI|NCAA DII|NCAA DIII", MEET_NAME, ignore.case = T) & !grepl("REGION", MEET_NAME, ignore.case = T) & grepl("CHAMPIONSHIPS", MEET_NAME, ignore.case = T)
+# Individual Season Analysis
+## Aggregate Individual Data
+```{r warning=FALSE}
+ind_agg <- ind %>%
+  group_by(
+    NAME, TEAM, year, gender, race_distance
+  ) %>%
+  summarise(
+    avg_pl = mean(PL, na.rm = T),
+    best_pl = min(PL, na.rm = T),
+    worst_pl = max(PL, na.rm = T),
+    avg_time = mean(numeric_time, na.rm = T),
+    best_time = min(numeric_time, na.rm = T),
+    worst_time = min(numeric_time, na.rm = T),
+    avg_time_behind_winner = mean(time_behind_winner, na.rm = T),
+    n_races = n_distinct(MEET_DT)
   ) %>%
   filter(
-    !(MEET_NAME %in% c("NCAA Division II Midwest Cross Country Championships", "NCAA Division II Central Championships"))
+    !is.na(NAME) & NAME != ""
+  )
+
+# # Remove any instances of only one race
+# ind_agg <- ind_agg %>%
+#   filter(
+#     n_races > 1
+#   )
+
+# Subset to only relevant distance / gender combos
+ind_agg <- ind_agg %>%
+  filter(
+    ( gender == "M" & race_distance %in% c("8k", "10k") ) | ( gender == "F" & race_distance %in% c("5k", "6k") )
+  )
+```
+
+# Regional Rankings
+## Format Data
+```{r}
+# Melt current regional rankings
+regional_rankings_current <- reg_rnk_c %>%
+  select(
+    Team, region, gender, div, Week..1, Week..2, Week..3, Week..4, Week..5, Week..6
+  ) %>%
+  rename(
+    `1` = Week..1,
+    `2` = Week..2,
+    `3` = Week..3, 
+    `4` = Week..4,
+    `5` = Week..5, 
+    `6` = Week..6
+  ) %>%
+  reshape2::melt(
+    id.vars = c("Team", "region", "div", "gender"), variable.name = "week", value.name = "ranking"
   ) %>%
   mutate(
-    MEET_DT = lubridate::ymd(MEET_DT),
-    # Modify the year for the 2020 season because of COVID
-    year = case_when(
-      year == 2021 & month == 3 ~ 2020, 
-      T ~ year
+    week = as.numeric(week)
+  )
+```
+
+## Plots
+### Division 1
+#### Women
+```{r}
+# Set max week
+mx_wk <- 4
+
+# Get final points for labeling sake
+final_pts <- regional_rankings_current %>%
+  filter( 
+    gender == "F" & div == "D1" & !is.na(ranking)
+  ) %>%
+  group_by(
+    Team
+  ) %>%
+  filter(
+    week == 4
+  )
+
+regional_rankings_current %>%
+  filter( 
+    gender == "F" & div == "D1" & !is.na(ranking)
+  ) %>%
+  ggplot(aes(week, ranking, color = Team, group = Team)) +
+  geom_point() +
+  geom_line() +
+  geom_text(data = final_pts, aes(label = Team, x = week, y = ranking), hjust = 1, vjust = 0) +
+  cfbplotR::scale_color_cfb() +
+  ggplot2::labs(
+    x = "Week",
+    y = "Regional Ranking",
+    caption = "",
+    title = "NCAA XC Regional Ranking by Week - D1 Women",
+    subtitle = "Unranked weeks are not shown."
+  ) +
+  ggplot2::theme_minimal() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    legend.position = "none",
+    axis.text.x = element_text(face = "italic"),
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 30, hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic", hjust = 0.5),
+    text = element_text(size=20, face = "bold"),
+  ) +
+  facet_wrap(
+    region ~ ., nrow = 2
+  )
+```
+
+
+```{r}
+reg_rnk_c %>%
+  filter( 
+    gender == "M" & div == "D2" & !is.na(Week..5)
+  ) %>%
+  mutate(
+    Preseason = case_when(
+      is.na(Preseason) ~ 16, 
+      T ~ Preseason
     )
-  ) 
+  ) %>%
+  ggplot(aes(Preseason, Week..4, color = Team, group = Team)) +
+  geom_point(size = 6) +
+  geom_segment(aes(x=Preseason, xend=Week..4, y=Week..4, yend=Week..4), size = 2,
+               arrow = arrow(length = unit(0.5, "cm"))) +
+  scale_x_reverse() +
+  geom_text(aes(label = Team, x = Week..4, y = Week..4), hjust = -0.25, vjust = 1.5, size = 4) +
+  scale_y_continuous(breaks = unique(reg_rnk_c$Week..1)) +
+  scale_x_continuous(breaks = unique(reg_rnk_c$Week..1)) +
+  cfbplotR::scale_color_cfb() +
+  ggplot2::labs(
+    x = "Ranking Movement",
+    y = "Current Ranking",
+    caption = "",
+    title = "NCAA XC Regional Ranking Movement from Preseason - D2 Men",
+    subtitle = "Unranked preseason shown as '16'."
+  ) +
+  ggplot2::theme_minimal() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    legend.position = "none",
+    axis.text.x = element_text(face = "italic"),
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 30, hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic", hjust = 0.5),
+    text = element_text(size=20, face = "bold"),
+  ) +
+  facet_wrap(
+    region ~ .
+  )
 ```
 
-## Get Preseason Rankings
-### Regional
+#### Men
 ```{r}
-# Subset to preseason
-pre_reg <- reg_rnk_h %>%
-  select(
-    Team, Preseason, region, gender, type, div, season
+# Get final points for labeling sake
+final_pts <- regional_rankings_current %>%
+  filter( 
+    gender == "M" & div == "D1" & !is.na(ranking)
+  ) %>%
+  group_by(
+    Team
+  ) %>%
+  filter(
+    week == 4
   )
 
-reg_rnk_c <- reg_rnk_c %>%
+regional_rankings_current %>%
+  filter( 
+    gender == "M" & div == "D1" & !is.na(ranking)
+  ) %>%
+  ggplot(aes(week, ranking, color = Team, group = Team)) +
+  geom_point() +
+  geom_line() +
+  geom_text(data = final_pts, aes(label = Team, x = week, y = ranking), hjust = 1, vjust = 0) +
+  cfbplotR::scale_color_cfb() +
+  ggplot2::labs(
+    x = "Week",
+    y = "Regional Ranking",
+    caption = "",
+    title = "NCAA XC Regional Ranking by Week - D1 Men",
+    subtitle = "Unranked weeks are not shown."
+  ) +
+  ggplot2::theme_minimal() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    legend.position = "none",
+    axis.text.x = element_text(face = "italic"),
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 30, hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic", hjust = 0.5),
+    text = element_text(size=20, face = "bold"),
+  ) +
+  facet_wrap(
+    region ~ ., nrow = 2
+  )
+```
+
+# National Rankings
+## Format Data
+```{r}
+# Melt data
+national_rankings_current <- nat_rnk_c %>%
   select(
-    -c(load_dt)
+    Team, gender, div, Week..1, Week..2, Week..3, Week..4, Week..5, Week..6
   ) %>%
   rename(
-    season = yr
-  )
-
-# Combine in current rankings
-pre_reg <- rbind(pre_reg, reg_rnk_c) %>%
-  rename(
-    preseason_reg = Preseason
-  )
-```
-
-### National
-```{r}
-pre_nat <- nat_rnk_h %>%
-  select(
-    Team, Preseason, gender, type, div, season
-  )
-
-nat_rnk_c <- nat_rnk_c %>%
-  select(
-    -c(load_dt)
+    `1` = Week..1,
+    `2` = Week..2,
+    `3` = Week..3, 
+    `4` = Week..4,
+    `5` = Week..5, 
+    `6` = Week..6
   ) %>%
-  rename(
-    season = yr
-  )
-
-pre_nat <- rbind(pre_nat, nat_rnk_c) %>%
-  rename(
-    preseason_nat = Preseason
+  reshape2::melt(
+    id.vars = c("Team", "div", "gender"), variable.name = "week", value.name = "ranking"
+  ) %>%
+  mutate(
+    week = as.numeric(week)
   )
 ```
 
-## Join Data
+## Plots
+### D1 Women
 ```{r}
-ncaa_rnk <- ncaas %>%
-  left_join(
-    pre_nat, by = c("Team", "gender", "year" = "season")
+# Set max week
+mx_wk <- 4
+
+# Get final points for labeling sake
+final_pts <- national_rankings_current %>%
+  filter( 
+    gender == "F" & div == "D1" & !is.na(ranking)
+  ) %>%
+  group_by(
+    Team
+  ) %>%
+  filter(
+    week == 4
+  )
+
+national_rankings_current %>%
+  filter( 
+    gender == "F" & div == "D1" & !is.na(ranking)
+  ) %>%
+  ggplot(aes(week, ranking, color = Team, group = Team)) +
+  geom_point() +
+  geom_line() +
+  geom_text(data = final_pts, aes(label = Team, x = week, y = ranking), hjust = 1, vjust = 0) +
+  cfbplotR::scale_color_cfb() +
+  ggplot2::labs(
+    x = "Week",
+    y = "National Ranking",
+    caption = "",
+    title = "NCAA XC National Ranking by Week - D1 Women",
+    subtitle = "Unranked weeks are not shown."
+  ) +
+  ggplot2::theme_minimal() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    legend.position = "none",
+    axis.text.x = element_text(face = "italic"),
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 30, hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic", hjust = 0.5),
+    text = element_text(size=20, face = "bold"),
   )
 ```
 
+### D2 Women
 ```{r}
+# Set max week
+mx_wk <- 5
 
+# Get final points for labeling sake
+final_pts <- national_rankings_current %>%
+  filter( 
+    gender == "F" & div == "D2" & !is.na(ranking)
+  ) %>%
+  group_by(
+    Team
+  ) %>%
+  filter(
+    week == mx_wk
+  )
+
+national_rankings_current %>%
+  filter( 
+    gender == "F" & div == "D2" & !is.na(ranking)
+  ) %>%
+  ggplot(aes(week, ranking, color = Team, group = Team)) +
+  geom_point() +
+  geom_line() +
+  geom_text(data = final_pts, aes(label = Team, x = week, y = ranking), hjust = 1, vjust = 0) +
+  cfbplotR::scale_color_cfb() +
+  ggplot2::labs(
+    x = "Week",
+    y = "National Ranking",
+    caption = "",
+    title = "NCAA XC National Ranking by Week - D2 Women",
+    subtitle = "Unranked weeks are not shown."
+  ) +
+  ggplot2::theme_minimal() +
+  ggplot2::theme(
+    aspect.ratio = 9 / 16,
+    legend.position = "none",
+    axis.text.x = element_text(face = "italic"),
+    axis.text.y = element_text(face = "italic"),
+    plot.title = ggplot2::element_text(size = 30, hjust = 0.5, face = "bold"),
+    plot.subtitle = element_text(face = "italic", hjust = 0.5),
+    text = element_text(size=20, face = "bold"),
+  )
 ```
-
-
-

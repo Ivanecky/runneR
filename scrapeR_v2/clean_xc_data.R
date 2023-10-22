@@ -33,8 +33,10 @@ pg <- dbConnect(
 )
 
 # Read data
-team <- dbGetQuery(pg, "select * from xc_team_raw where load_d in (select max(load_d) from xc_team_raw)")
-ind <- dbGetQuery(pg, "select * from xc_ind_raw where load_d in (select max(load_d) from xc_ind_raw)")
+# team <- dbGetQuery(pg, "select * from xc_team_raw where load_d in (select max(load_d) from xc_team_raw)")
+# ind <- dbGetQuery(pg, "select * from xc_ind_raw where load_d in (select max(load_d) from xc_ind_raw)")
+team <- dbGetQuery(pg, "select * from xc_team_raw where cast(load_d as date) > cast('2023-09-08' as date)")
+ind <- dbGetQuery(pg, "select * from xc_ind_raw where cast(load_d as date) > cast('2023-09-08' as date)")
 
 #########################
 # Clean team data
@@ -170,15 +172,9 @@ ind <- ind %>%
   ungroup()
 
 # Get existing data
-ex_teams <- dbGetQuery(pg, "select * from xc_team_dets") %>%
-  select(
-    -c(load_d)
-  )
+ex_teams <- dbGetQuery(pg, "select * from xc_team_dets") 
 
-ex_ind <- dbGetQuery(pg, "select * from xc_ind_dets") %>%
-  select(
-    -c(load_d)
-  )
+ex_ind <- dbGetQuery(pg, "select * from xc_ind_dets") 
 
 # Drop load date
 team <- team %>%

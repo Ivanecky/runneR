@@ -71,19 +71,19 @@ getHistoricRegionalRankings <- function(url, gender, season, div, type = "region
     html_table()
   
   # Number of regions differs on division, set tbls by division
-  n_tbls <- case_when(
-    div == "D1" ~ 2,
-    div == "D2" ~ 2,
-    div == "D3" ~ 2,
-    T ~ 0
-  )
+  # n_tbls <- case_when(
+  #   div == "D1" ~ 1,
+  #   div == "D2" ~ 1,
+  #   div == "D3" ~ 1,
+  #   T ~ 0
+  # )
   
   # Check if any tables exist
   if (length(df_tbls) <= 1)
     return(NULL)
   
   # Drop last tbls
-  df_tbls <- df_tbls[1:(length(df_tbls) - n_tbls)]
+  df_tbls <- df_tbls[1:(length(df_tbls) - 1)]
   
   # Read header attrs
   df_hdrs <- url %>%
@@ -235,6 +235,10 @@ nat_df <- nat_df %>%
 #   select(
 #     -c(X1, X2)
 #   )
+
+# Convert to dataframes
+nat_df <- as.data.frame(nat_df)
+regional_df <- as.data.frame(regional_df)
 
 # Upload to dataframe
 # National

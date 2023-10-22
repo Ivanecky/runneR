@@ -60,15 +60,15 @@ getCurrentRegionalRankings <- function(url, gender, div, type = "regional") {
     html_table()
   
   # Number of regions differs on division, set tbls by division
-  n_tbls <- case_when(
-    div == "D1" ~ 2,
-    div == "D2" ~ 2,
-    div == "D3" ~ 2,
-    T ~ 0
-  )
+  # n_tbls <- case_when(
+  #   div == "D1" ~ 2,
+  #   div == "D2" ~ 2,
+  #   div == "D3" ~ 2,
+  #   T ~ 0
+  # )
   
   # Drop last tbls
-  df_tbls <- df_tbls[1:(length(df_tbls) - n_tbls)]
+  df_tbls <- df_tbls[1:(length(df_tbls) - 1)]
   
   # Read header attrs
   df_hdrs <- url %>%
@@ -165,6 +165,10 @@ regional <- regional %>%
   mutate(
     yr = year(lubridate::today())
   )
+
+# Convert back to dataframes
+national <- as.data.frame(national)
+regional <- as.data.frame(regional)
 
 # Upload to dataframes
 # dbCreateTable(pg, "xc_nat_rank_current", national)
