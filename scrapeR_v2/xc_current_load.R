@@ -1,4 +1,6 @@
 # Code to generate line item performances from TFRRS for XC meets
+# This is the current version which should be used for extracting XC results
+
 library(tidyverse)
 library(httr)
 library(jsonlite)
@@ -25,15 +27,16 @@ source("/Users/samivanecky/git/runneR/scrapeR/altConversinFxns.R")
 url <- "https://www.tfrrs.org/results_search.html"
 
 # Read connection data from yaml
-pg.yml <- read_yaml("/Users/samivanecky/git/postgres.yaml")
+pg.rds.yml <- read_yaml("secrets/aws_rds.yaml")
 
 # Connect to database
-pg <- dbConnect(
+pg_rds <- dbConnect(
   RPostgres::Postgres(),
-  host = pg.yml$host,
-  user = pg.yml$user,
-  db = pg.yml$database,
-  port = pg.yml$port
+  host = pg.rds.yml$host,
+  user = pg.rds.yml$user,
+  db = pg.rds.yml$dbname,
+  port = pg.rds.yml$port,
+  password = pg.rds.yml$pwd
 )
 
 # Read meet name links
@@ -50,7 +53,7 @@ meet_links$link <- gsub("org//", "org/", meet_links$link)
 meet_links <- funique(meet_links)
 
 # Get already scraped links
-scraped_links <- dbGetQuery(pg, "select * from meet_links")
+scraped_links <- dbGetQuery(pg_rds, "select * from meet_links")
 
 # Filter out already scraped links
 meet_links <- meet_links %>%
@@ -62,7 +65,7 @@ meet_links <- meet_links %>%
 meet_links <- as.data.frame(meet_links)
 
 # Write new links to table
-dbWriteTable(pg, "meet_links", meet_links, append = TRUE)
+dbWriteTable(pg_rds, "meet_links", meet_links, append = TRUE)
 
 # Convert back to vector
 meet_links <- meet_links$link
@@ -124,6 +127,6 @@ colnames(team_tbl) <- sub(".*teams\\.", "", colnames(team_tbl))
 colnames(ind_tbl) <- sub(".*individuals\\.", "", colnames(ind_tbl))
 
 # Write to tables
-dbWriteTable(pg, "xc_team_raw", team_tbl, append = TRUE)
-dbWriteTable(pg, "xc_ind_raw", ind_tbl, append = TRUE)
+dbWriteTable(pg_rds, "xc_team_raw", team_tbl, append = TRUE)
+dbWriteTable(pg_rds, "xc_ind_raw", ind_tbl, append = TRUE)
 

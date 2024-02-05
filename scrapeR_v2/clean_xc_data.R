@@ -15,28 +15,28 @@ library(zoo)
 library(dplyr)
 library(lubridate)
 library(yaml)
+library(glue)
 
 # Load functions
 source("/Users/samivanecky/git/runneR/scrapeR/Scraping_Fxns.R")
 
 # Connect to PG
 # Read connection data from yaml
-pg.yml <- read_yaml("/Users/samivanecky/git/postgres.yaml")
+pg.rds.yml <- read_yaml("secrets/aws_rds.yaml")
 
 # Connect to database
-pg <- dbConnect(
+pg_rds <- dbConnect(
   RPostgres::Postgres(),
-  host = pg.yml$host,
-  user = pg.yml$user,
-  db = pg.yml$database,
-  port = pg.yml$port
+  host = pg.rds.yml$host,
+  user = pg.rds.yml$user,
+  db = pg.rds.yml$dbname,
+  port = pg.rds.yml$port,
+  password = pg.rds.yml$pwd
 )
 
 # Read data
-# team <- dbGetQuery(pg, "select * from xc_team_raw where load_d in (select max(load_d) from xc_team_raw)")
-# ind <- dbGetQuery(pg, "select * from xc_ind_raw where load_d in (select max(load_d) from xc_ind_raw)")
-team <- dbGetQuery(pg, "select * from xc_team_raw where cast(load_d as date) > cast('2023-09-08' as date)")
-ind <- dbGetQuery(pg, "select * from xc_ind_raw where cast(load_d as date) > cast('2023-09-08' as date)")
+team <- dbGetQuery(pg_rds, "select * from xc_team_raw where load_d in (select max(load_d) from xc_team_raw)")
+ind <- dbGetQuery(pg_rds, "select * from xc_ind_raw where load_d in (select max(load_d) from xc_ind_raw)")
 
 #########################
 # Clean team data
@@ -172,9 +172,9 @@ ind <- ind %>%
   ungroup()
 
 # Get existing data
-ex_teams <- dbGetQuery(pg, "select * from xc_team_dets") 
+ex_teams <- dbGetQuery(pg_rds, "select * from xc_team_dets") 
 
-ex_ind <- dbGetQuery(pg, "select * from xc_ind_dets") 
+ex_ind <- dbGetQuery(pg_rds, "select * from xc_ind_dets") 
 
 # Drop load date
 team <- team %>%
@@ -196,6 +196,6 @@ new_upload_team <- rbind(ex_teams, team) %>%
 
 # Write tables
 # dbCreateTable(pg, "xc_team_dets", team)
-dbWriteTable(pg, "xc_team_dets", new_upload_team, overwrite = TRUE)
+dbWriteTable(pg_rds, "xc_team_dets", new_upload_team, overwrite = TRUE)
 # dbCreateTable(pg, "xc_ind_dets", ind)
-dbWriteTable(pg, "xc_ind_dets", new_upload_ind, overwrite = TRUE)
+dbWriteTable(pg_rds, "xc_ind_dets", new_upload_ind, overwrite = TRUE)

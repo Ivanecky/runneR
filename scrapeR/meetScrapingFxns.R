@@ -2,10 +2,7 @@
 library(tidyverse)
 library(httr)
 library(dplyr)
-library(jsonlite)
-library(RPostgreSQL)
 library(DBI)
-library(RSQLite)
 library(reshape2)
 library(stringr)
 library(stringi)
@@ -610,7 +607,7 @@ getEventResults <- function(url) {
       # Add race name
       temp_results$RACE_NAME <- race_names[2]
       # Bind to existing data
-      race_results <- rbind.fill(race_results, temp_results)
+      race_results <- plyr::rbind.fill(race_results, temp_results)
       
     } else {
       # Create new table
@@ -631,7 +628,8 @@ getEventResults <- function(url) {
       MEET_DATE = meet_date,
       MEET_LOCATION = meet_loc,
       MEET_NAME = meet_name
-    )
+    ) %>%
+    unique()
   
   # Return results
   return(race_results)

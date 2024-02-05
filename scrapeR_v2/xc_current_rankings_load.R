@@ -14,15 +14,16 @@ source("/Users/samivanecky/git/runneR/scrapeR/Scraping_Fxns.R")
 source("/Users/samivanecky/git/runneR/scrapeR/meetScrapingFxns.R")
 
 # Read connection data from yaml
-pg.yml <- read_yaml("/Users/samivanecky/git/postgres.yaml")
+pg.yml <- read_yaml("/Users/samivanecky/git/runneR/secrets/aws_rds.yaml")
 
 # Connect to database
 pg <- dbConnect(
   RPostgres::Postgres(),
   host = pg.yml$host,
   user = pg.yml$user,
-  db = pg.yml$database,
-  port = pg.yml$port
+  db = pg.yml$dbname,
+  port = pg.yml$port,
+  password = pg.yml$pwd
 )
 
 ####################
@@ -90,7 +91,7 @@ getCurrentRegionalRankings <- function(url, gender, div, type = "regional") {
           region = df_hdrs[i]
         )
       # Bind to existing data
-      reg_df <- rbind(reg_df, temp_df)
+      reg_df <- plyr::rbind.fill(reg_df, temp_df)
     } else {
       # Create df
       reg_df <- as.data.frame(df_tbls[i])
