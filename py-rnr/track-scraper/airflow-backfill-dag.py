@@ -7,6 +7,24 @@ import uuid
 import psycopg2
 import yaml
 from bs4 import BeautifulSoup
+from sqlalchemy import create_engine
+
+pd.options.mode.copy_on_write = True
+
+# Code to load the URLs to be batched
+# Connect to postgres
+# Read connection data from YAML
+with open("/opt/airflow/secrets/aws_rds.yaml", "r") as yaml_file:
+    pg_config = yaml.safe_load(yaml_file)
+
+# Connect to the database
+conn = psycopg2.connect(
+    host=pg_config['host'],
+    user=pg_config['user'],
+    password=pg_config['pwd'],
+    dbname=pg_config['dbname'],
+    port=pg_config['port']
+)
 
 def get_event_results(url):
     # Get HTML content from the URL
@@ -23,7 +41,11 @@ def get_event_results(url):
     loc_info = soup.find_all(class_ = "panel-heading-normal-text inline-block")
     meet_date = loc_info[0].text
     meet_loc = loc_info[1].text
-    meet_track_type = loc_info[2].text
+    # Check for track size (outdoor doesn't list sizing)
+    if len(loc_info) > 2:
+        meet_track_type = loc_info[2].text
+    else:
+        meet_track_type = None
     # Check if at altitude 
     if len(loc_info) > 3:
         meet_altitude = loc_info[3].text
@@ -82,10 +104,12 @@ default_args = {
 dag = DAG('batch_url_processing',
           default_args=default_args,
           description='Process TFRRS URLs in batches',
+          max_active_runs=1,
+          max_active_tasks=6,
           schedule_interval=None,  # None means this DAG will only be triggered manually
           catchup=False)
 
-def process_batch(batch_of_urls, **kwargs):
+def process_batch(batch_of_urls, conn, **kwargs):
     """
     Function to process a batch of URLs.
     Replace the content with your actual scraping logic.
@@ -100,7 +124,7 @@ def process_batch(batch_of_urls, **kwargs):
 
         try:
             # get the event data
-            tmp_res = rnr.get_event_results(url)
+            tmp_res = get_event_results(url)
             # combine the data
             try:
                 # concat data with existing data
@@ -111,28 +135,23 @@ def process_batch(batch_of_urls, **kwargs):
         except Exception as e:
             print(f"{e}")
     
-    # Once data is filled, write data to database
-    fp = '/data/' + str(uuid.uuid4()) + '.parquet'
-    all_res.to_parquet(fp, engine='pyarrow')
+    # # Once data is filled, write data to database
+    # fp = '/opt/airflow/data/' + str(uuid.uuid4()) + '.csv'
+    # all_res.to_csv(fp)
+            
+    print("Loading data to postgres...")
 
-# Code to load the URLs to be batched
-# Connect to postgres
-# Read connection data from YAML
-with open("/Users/samivanecky/git/runneR/secrets/aws_rds.yaml", "r") as yaml_file:
-    pg_config = yaml.safe_load(yaml_file)
+    # connection_str = 'postgresql://' + str(pg_config['user']) + ':' + str(pg_config['pwd']) + '@' + str(pg_config['host']) + ':5432/' + str(pg_config['dbname'])
 
-# Connect to the database
-conn = psycopg2.connect(
-    host=pg_config['host'],
-    user=pg_config['user'],
-    password=pg_config['pwd'],
-    dbname=pg_config['dbname'],
-    port=pg_config['port']
-)
+    # Create a SQLAlchemy engine
+    engine = create_engine(conn)
+
+    # Write the DataFrame to the PostgreSQL database
+    all_res.to_sql('tf_ind_lines_fct', engine, if_exists='append', index=False)
 
 # Load data from event links table
 evnt_links_query = "SELECT * FROM track_scraped_links"
-evnt_links = pd.read_sql_query(evnt_links_query, conn)
+evnt_links = pd.read_sql(evnt_links_query, conn)
 
 # Get only the links
 lnks = list(evnt_links['link'])
@@ -145,5 +164,5 @@ for i, batch in enumerate(batches):
         task_id=f'process_batch_{i}',
         python_callable=process_batch,
         op_kwargs={'batch_of_urls': batch},
-        dag=dag,
+        dag=dag
     )

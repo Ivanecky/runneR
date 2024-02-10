@@ -1,141 +1,17 @@
 # load libraries
-import requests
 import pandas as pd
-import os
-from bs4 import BeautifulSoup
 import yaml
 import psycopg2
+import rnr_fxns as rnr
+import yaml
+import warnings
+from sqlalchemy import create_engine
 
-# connect to main tfrrs page
-base_url = "https://tfrrs.org/results_search.html"
-
-# placeholder for connecting to postgres
-# placeholder for reading yaml file
-
-def get_page_lnks(base_url):
-    # extract current links from the page
-    try:
-        # get html
-        html = requests.get(base_url)
-    except:
-        print("Issue making request")
-
-    # get all links
-    # convert to soup
-    pg_soup = BeautifulSoup(html.content, 'html.parser')
-
-    # get links
-    lnks = pg_soup.find_all('a', href=True)
-
-    # filter to only meet links
-    lnks = [l for l in lnks if 'results' in l['href']]
-    lnks = [l for l in lnks if 'results_search' not in l['href']]
-
-    # fix link formatting
-    lnks = ['https://tfrrs.org' + str(l['href']) for l in lnks]
-
-    # return links
-    return(lnks)
-
-# iterate over pages in tfrrs results page
-def get_all_lnks():
-
-    base_url = "https://tfrrs.org/results_search.html?page="
-
-    # list to hold links
-    all_lnks = []
-
-    # iterate over a range
-    for i in range(1, 2000):
-        # set url
-        url = base_url + str(i)
-
-        # print status
-        print(f"Getting data for: {url}")
-
-        # try and get data
-        try:
-            tmp_lnks = get_page_lnks(url)
-        except:
-            print(f"Issue getting data for {url}")
-        
-        # check to see if valid list of links
-        if len(tmp_lnks) > 0:
-            all_lnks.append(tmp_lnks)
-        else:
-            print(f"Page {base_url} did not have a valide number of links. Returning data now...")
-            all_lnks = [s for sublist in all_lnks for s in sublist]
-            return(all_lnks)
-        
-    # flatten out list of lists
-    all_lnks = [s for sublist in all_lnks for s in sublist]
-    
-    # return final list
-    print(f"All data gathered. Returning links...")
-    return(all_lnks)
-
-# function to get data from links
-def get_evnt_lnks(url):
-    # get html for base url
-    try:
-        # get html
-        html = requests.get(url)
-    except:
-        print(f"Issue making request for {url}")
-
-    # get all links
-    # convert to soup
-    pg_soup = BeautifulSoup(html.content, 'html.parser')
-
-    # get links
-    lnks = pg_soup.find_all('a', href=True)
-
-    # filter to only meet links
-    lnks = [l for l in lnks if 'results' in l['href']]
-    lnks = [l for l in lnks if 'results_search' not in l['href']]
-
-    # keep only href elements
-    lnks = [l['href'] for l in lnks]
-
-    # return links
-    return(lnks)
-
-def get_tf_evnt_lnks(lnks):
-    # test for getting track event links
-    # subset to track only
-    tf_lnks = [l for l in all_lnks if 'results/xc' not in l]
-
-    # vector to hold track links
-    tf_evnt_lnks = []
-
-    # iterate over subset to get the event links
-    for i in tf_lnks:
-        # print status
-        print(f"Getting data for {i}")
-
-        # get the event links
-        try:
-            tmp_lnks = get_evnt_lnks(i)
-        except:
-            print(f"Error getting data for {i}")
-        
-        # append the event links to the overall list
-        tf_evnt_lnks.append(tmp_lnks)
-
-    # unnest list of lists
-    tf_evnt_lnks = [s for sublist in tf_evnt_lnks for s in sublist]
-
-    # return the data
-    return(tf_evnt_lnks)
+# Ignore FutureWarning
+warnings.filterwarnings("ignore", category=FutureWarning)
 
 def main():
-    # get all links on tfrrs
-    all_lnks = get_all_lnks()
-
-    # get tf events
-    tf_evnts = get_tf_evnt_lnks(all_lnks)
-
-    # Read connection data from YAML
+    # Connect to postgres
     with open("/Users/samivanecky/git/runneR/secrets/aws_rds.yaml", "r") as yaml_file:
         pg_config = yaml.safe_load(yaml_file)
 
@@ -147,3 +23,46 @@ def main():
         dbname=pg_config['dbname'],
         port=pg_config['port']
     )
+            
+    # get all links on tfrrs
+    meet_lnks = rnr.get_current_meet_lnks()
+
+    # Get all event links from the meets
+    evnt_lnks = rnr.get_tf_evnt_lnks(meet_lnks)
+
+    # Get list of already queried links from pg
+    # Load data from event links table
+    scraped_evnt_links_query = "SELECT * FROM track_scraped_links_comp"
+    scraped_evnt_lnks = pd.read_sql(scraped_evnt_links_query, conn)
+    scraped_evnt_lnks = list(scraped_evnt_lnks['link'])
+
+    # Filter out already scraped events
+    evnt_lnks = [l for l in evnt_lnks if l not in scraped_evnt_lnks]
+
+    # Iterate over events and get results
+        # Iterate over URLs and get the data
+    for url in evnt_lnks:
+        # print status
+        print(f"Getting data for {url}")
+
+        try:
+            # get the event data
+            tmp_res = rnr.get_tf_event_results(url)
+            # combine the data
+            try:
+                # concat data with existing data
+                all_res = pd.concat([all_res, tmp_res], axis=0)
+            except Exception as e:
+                print(f"{e}")
+                all_res = tmp_res
+        except Exception as e:
+            print(f"{e}")
+
+    
+    connection_str = 'postgresql://' + str(pg_config['user']) + ':' + str(pg_config['pwd']) + '@' + str(pg_config['host']) + ':5432/' + str(pg_config['dbname'])
+
+    # Create a SQLAlchemy engine
+    engine = create_engine(connection_str)
+
+    # Write the DataFrame to the PostgreSQL database
+    all_res.to_sql('tf_ind_res_fct ', engine, if_exists='append', index=False)

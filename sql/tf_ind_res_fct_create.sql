@@ -1,0 +1,45 @@
+create table tf_ind_res_fct (
+	PL INTEGER,
+	NAME VARCHAR,
+	YEAR VARCHAR,
+	TEAM VARCHAR,
+	TIME VARCHAR,
+	RACE_NAME VARCHAR,
+	MEET_DATE VARCHAR,
+	MEET_LOCATION VARCHAR,
+	MEET_NAME VARCHAR,
+	MEET_TRACK_TYPE VARCHAR,
+	MEET_ALTITUDE VARCHAR
+)
+
+
+insert into tf_ind_res_fct 
+
+(
+	PL,
+	NAME,
+	YEAR,
+	TEAM,
+	TIME,
+	RACE_NAME,
+	MEET_DATE,
+	MEET_LOCATION,
+	MEET_NAME,
+	MEET_TRACK_TYPE,
+	MEET_ALTITUDE
+)
+
+select 
+	"PL",
+	"NAME",
+	"YEAR",
+	"TEAM",
+	"TIME",
+	"RACE_NAME",
+	"MEET_DATE",
+	"MEET_LOCATION",
+	"MEET_NAME",
+	null as MEET_TRACK_TYPE,
+	null as MEET_ALTITIUDE
+from 
+	ind_track_results_raw 

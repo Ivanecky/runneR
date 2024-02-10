@@ -6,6 +6,7 @@ from bs4 import BeautifulSoup
 import yaml
 import psycopg2
 
+# Function used to extract the links from the TFRRS meets page
 def get_page_lnks(base_url):
     # extract current links from the page
     try:
@@ -31,8 +32,8 @@ def get_page_lnks(base_url):
     # return links
     return(lnks)
 
-# iterate over pages in tfrrs results page
-def get_all_lnks():
+# get full history of tfrrs meet links
+def get_all_meet_lnks():
 
     base_url = "https://tfrrs.org/results_search.html?page="
 
@@ -68,7 +69,44 @@ def get_all_lnks():
     print(f"All data gathered. Returning links...")
     return(all_lnks)
 
-# function to get data from links
+# get recent meets
+def get_current_meet_lnks():
+
+    base_url = "https://tfrrs.org/results_search.html?page="
+
+    # list to hold links
+    all_lnks = []
+
+    # iterate over a range
+    for i in range(1, 25):
+        # set url
+        url = base_url + str(i)
+
+        # print status
+        print(f"Getting data for: {url}")
+
+        # try and get data
+        try:
+            tmp_lnks = get_page_lnks(url)
+        except:
+            print(f"Issue getting data for {url}")
+        
+        # check to see if valid list of links
+        if len(tmp_lnks) > 0:
+            all_lnks.append(tmp_lnks)
+        else:
+            print(f"Page {base_url} did not have a valide number of links. Returning data now...")
+            all_lnks = [s for sublist in all_lnks for s in sublist]
+            return(all_lnks)
+        
+    # flatten out list of lists
+    all_lnks = [s for sublist in all_lnks for s in sublist]
+    
+    # return final list
+    print(f"All data gathered. Returning links...")
+    return(all_lnks)
+
+# function to get event links from a meet URL
 def get_evnt_lnks(url):
     # get html for base url
     try:
@@ -97,7 +135,7 @@ def get_evnt_lnks(url):
 def get_tf_evnt_lnks(lnks):
     # test for getting track event links
     # subset to track only
-    tf_lnks = [l for l in all_lnks if 'results/xc' not in l]
+    tf_lnks = [l for l in lnks if 'results/xc' not in l]
 
     # vector to hold track links
     tf_evnt_lnks = []
@@ -122,7 +160,8 @@ def get_tf_evnt_lnks(lnks):
     # return the data
     return(tf_evnt_lnks)
 
-def get_event_results(url):
+# Get event data from a TF event URL
+def get_tf_event_results(url):
     # Get HTML content from the URL
     response = requests.get(url)
     html = response.content
@@ -137,7 +176,11 @@ def get_event_results(url):
     loc_info = soup.find_all(class_ = "panel-heading-normal-text inline-block")
     meet_date = loc_info[0].text
     meet_loc = loc_info[1].text
-    meet_track_type = loc_info[2].text
+    # Check for track size (outdoor doesn't list sizing)
+    if len(loc_info) > 2:
+        meet_track_type = loc_info[2].text
+    else:
+        meet_track_type = None
     # Check if at altitude 
     if len(loc_info) > 3:
         meet_altitude = loc_info[3].text
