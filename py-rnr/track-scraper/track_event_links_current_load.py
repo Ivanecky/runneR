@@ -9,6 +9,7 @@ from sqlalchemy import create_engine
 
 # Ignore FutureWarning
 warnings.filterwarnings("ignore", category=FutureWarning)
+pd.options.mode.copy_on_write = True
 
 def main():
     # Connect to postgres
@@ -64,5 +65,11 @@ def main():
     # Create a SQLAlchemy engine
     engine = create_engine(connection_str)
 
+    # Create raw connection
+    sql_conn = engine.connect()
+            
+    # Convert column names to lowercase to match table
+    all_res.columns = all_res.columns.str.lower()
+
     # Write the DataFrame to the PostgreSQL database
-    all_res.to_sql('tf_ind_res_fct ', engine, if_exists='append', index=False)
+    all_res.to_sql('tf_ind_res_fct ', sql_conn.connection, if_exists='append', index=False)
