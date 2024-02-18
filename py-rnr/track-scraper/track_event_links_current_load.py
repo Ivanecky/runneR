@@ -1,3 +1,6 @@
+# Change working directory
+os.chdir('/Users/samivanecky/git/runneR/py-rnr/track-scraper/')
+
 # load libraries
 import pandas as pd
 import yaml
@@ -6,6 +9,10 @@ import rnr_fxns as rnr
 import yaml
 import warnings
 from sqlalchemy import create_engine
+import iceberg as ib 
+import pyarrow as pa
+from pyspark.sql import SparkSession
+import pyspark.sql.functions as f
 
 # Ignore FutureWarning
 warnings.filterwarnings("ignore", category=FutureWarning)
@@ -59,17 +66,32 @@ def main():
         except Exception as e:
             print(f"{e}")
 
-    
-    connection_str = 'postgresql://' + str(pg_config['user']) + ':' + str(pg_config['pwd']) + '@' + str(pg_config['host']) + ':5432/' + str(pg_config['dbname'])
 
-    # Create a SQLAlchemy engine
-    engine = create_engine(connection_str)
+    # create Spark session
+    spark = SparkSession.builder \
+        .appName("Write to RDS PostgreSQL") \
+        .config("spark.jars.packages", "org.postgresql:postgresql:42.2.18") \
+        .getOrCreate()
 
-    # Create raw connection
-    sql_conn = engine.connect()
-            
-    # Convert column names to lowercase to match table
-    all_res.columns = all_res.columns.str.lower()
+    # Write using Spark
+    # Convert pandas -> spark
+    all_res_sp = spark.createDataFrame(all_res)
 
-    # Write the DataFrame to the PostgreSQL database
-    all_res.to_sql('tf_ind_res_fct ', sql_conn.connection, if_exists='append', index=False)
+    # Drop unnamed col
+    all_res_sp = all_res_sp.drop("Unnamed: 0")
+
+    # JDBC URL
+    url = f"jdbc:postgresql://{pg_config['host']}:5432/{pg_config['dbname']}"
+
+    # Set properties
+    properties = {
+        "user": pg_config['user'],
+        "password": pg_config['pwd'],
+        "driver": "org.postgresql.Driver"
+    }
+
+    # Before uploading, replace any NaN or NA with -1
+    all_res_sp = all_res_sp.withColumn("pl", f.when(f.isnull(f.col("pl")) | f.isnan(f.col("pl")), -1).otherwise(f.col("pl")))
+
+    # Write DataFrame to RDS PostgreSQL table
+    all_res_sp.write.jdbc(url=url, table="tf_ind_res_fct", mode="append", properties=properties)
