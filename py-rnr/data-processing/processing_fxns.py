@@ -1,5 +1,4 @@
 from datetime import datetime
-import pandas as pd
 
 # Function for getting first date
 def get_start_dt(meet_date) -> str:
@@ -82,7 +81,7 @@ def get_end_dt(meet_date) -> str:
     
 # convert track to numeric length
 def convert_track_length(track_length) -> int:
-    if track_length != "NULL":
+    if track_length != "NULL" and track_length is not None:
         # drop the potential m
         track_length = track_length.replace('m', '')
 
@@ -93,3 +92,54 @@ def convert_track_length(track_length) -> int:
     # handle null values
     else:
         return(400)
+    
+def get_conv_800(alt):
+    conv_mark = 1.004556e+00 + alt * (-2.137286e-06)
+    return conv_mark
+
+def get_conv_mile(alt):
+    conv_mark = 1.012194e+00 + alt * (-6.834575e-06)
+    return conv_mark
+
+def get_conv_3k(alt):
+    conv_mark = 1.015564e+00 + alt * (-8.205417e-06)
+    return conv_mark
+
+def get_conv_5k(alt):
+    conv_mark = 1.016327e+00 + alt * (-8.773153e-06)
+    return conv_mark
+
+def get_conv(alt, event, mark) -> float:
+    # Check if no elevation, return time as is
+    if alt == 0 or event not in ["800m", "Mile", "3000m", "5000m"]:
+        return mark
+    else:
+        if event == "800m":
+            # Get conversion factor
+            conv_fac = get_conv_800(alt)
+        elif event == "Mile":
+            # Get conversion factor
+            conv_fac = get_conv_mile(alt)
+        elif event == "3000m":
+            # Get conversion factor
+            conv_fac = get_conv_3k(alt)
+        else:  # 5000m
+            # Get conversion factor
+            conv_fac = get_conv_5k(alt)
+        
+        # Convert mark
+        conv_mrk = conv_fac * mark
+        # Return converted mark
+        return conv_mrk
+
+# function to determine track type for conversion
+def get_track_conv_type(track_length, banked_or_flat) -> str:
+    # Check to see if track is banked
+    if banked_or_flat == 'banked':
+        return('no conversion')
+    elif banked_or_flat == 'flat' and track_length < 200:
+        return('undersized')
+    elif track_length == 200 and banked_or_flat == 'flat':
+        return('flat')
+    else:
+        return('no conversion')

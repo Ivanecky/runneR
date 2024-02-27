@@ -78,7 +78,7 @@ def get_current_meet_lnks():
     all_lnks = []
 
     # iterate over a range
-    for i in range(1, 25):
+    for i in range(1, 200):
         # set url
         url = base_url + str(i)
 
@@ -224,3 +224,58 @@ def get_tf_event_results(url):
     race_results = race_results[race_results['RACE_NAME'] != 'Unknown Race']
 
     return race_results
+
+def get_meet_info(url) -> pd.DataFrame:
+    # Get meet html
+    response = requests.get(url)
+    html = response.content
+
+    # Parse HTML using BeautifulSoup
+    soup = BeautifulSoup(html, 'html.parser')
+
+    # Get location info
+    loc_info = soup.find_all(class_ = "panel-heading-normal-text inline-block")
+    meet_loc = loc_info[1].text
+    # Check for track size (outdoor doesn't list sizing)
+    if len(loc_info) > 2:
+        # Outdoor meet at altitude
+        if len(loc_info) == 3 and 'elevation' in loc_info[2].text:
+            meet_altitude = loc_info[2].text
+            meet_track_type = '400m'
+        # Indoor meet not at altitude
+        elif len(loc_info) == 3 and 'elevation' not in loc_info[2].text:
+            meet_track_type = loc_info[2].text
+            meet_altitude = '0'
+        # Indoor meet at altitude
+        else:
+            meet_track_type = loc_info[2].text
+            meet_altitude = loc_info[3].text
+    else:
+        meet_track_type = ''
+        meet_altitude = ''
+        
+    # Clean up elements
+    meet_loc = meet_loc.strip()
+    meet_track_type = str(meet_track_type).replace("\n", "").strip() if meet_track_type is not None else None 
+    meet_altitude = str(meet_altitude).replace("ft. elevation", "").strip() if meet_altitude is not None else None
+
+    # Get if track is banked or flat
+    banked_or_flat = "banked" if "banked" in meet_track_type.lower() else "flat"
+
+    # Remove bank/flat from track length
+    track_length = meet_track_type[0:4]
+
+    # Make sure we don't pull any timing names into the data
+    meet_altitude = meet_altitude if 'timi' not in meet_altitude.lower() else ''
+    track_length = track_length if 'timi' not in track_length.lower() else ''
+
+    # Combine elements into pandas dataframe
+    df = pd.DataFrame({
+        'meet_facility': [meet_loc],
+        'elevation': [meet_altitude],
+        'track_length': [track_length],
+        'banked_or_flat': [banked_or_flat]
+    })
+
+    # Return data
+    return(df)
