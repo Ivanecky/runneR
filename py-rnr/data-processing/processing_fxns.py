@@ -1,4 +1,5 @@
 from datetime import datetime
+import re 
 
 # Function for getting first date
 def get_start_dt(meet_date) -> str:
@@ -10,47 +11,68 @@ def get_start_dt(meet_date) -> str:
 
     # Strip any potential whitespace
     meet_date = meet_date.strip()
+
+    # Remove any duplicate whitespace
+    meet_date = re.sub(r'\s+', ' ', meet_date)
+
+    # Replace any hyphens followed by a space with just a hyphen
+    # Some rows have weird formatting with an extraneous space that isn't technically a double space
+    meet_date = re.sub('- ', '-', meet_date)
+
+    try:
     
-    if occurrences < 2:
-        # Split the meet date
-        dt_pts = meet_date.split(' ')
+        # Handle multi month dates
+        if occurrences > 1:
+            # Split into separate months
+            dt_pts = meet_date.split('-')
+
+            # Grab the year
+            meet_yr = meet_date[-4:]
+
+            # Get the first component and append the year
+            date_string = str(dt_pts[0]) + ', ' + str(meet_yr)
+
+            # Convert to date and then string format
+            date_string = datetime.strptime(date_string, "%B %d, %Y")
+
+            # Format as string
+            first_dt = date_string.strftime("%Y-%m-%d")
         
-        # Get the month index
-        month_number = datetime.strptime(dt_pts[0], "%B").month
+        # Handle single month dates
+        else:
+
+            # Check if date is multiple days or single day
+            if '-' in meet_date: # Multiple days
+                # Split off year
+                meet_yr = meet_date[-4:]
+
+                # Split the date on the comma
+                days_pts = meet_date.split(',')
+
+                # Split into month and days
+                mnth_dy = days_pts[0].split(' ')
                 
-        # Extract day component
-        day_pts = dt_pts[1].split('-')
+                # Get the first day
+                day_one = mnth_dy[1].split('-')[0]
+
+                # Put the components together in a single string
+                date_string = str(mnth_dy[0]) + ' ' + str(day_one) + ', ' + str(meet_yr)
+                date_string = datetime.strptime(date_string, "%B %d, %Y")
+
+                # Format as string
+                first_dt = date_string.strftime("%Y-%m-%d")
+
+            else: # Single day
+                # Convert the string to a date
+                date_string = datetime.strptime(meet_date, "%B %d, %Y")
+
+                # Format as string
+                first_dt = date_string.strftime("%Y-%m-%d")
                 
-        # Get first component as day
-        day = day_pts[0].replace(",", "")
-    
-        # Get year
-        yr = dt_pts[2]
-    
-        # Put all together
-        start_dt = str(yr) + '-' + str(month_number) + '-' + str(day)
-    
-        # Return data
-        return(start_dt)
-    
-    # Handle multi month dates
-    else:
-        dt_pts = meet_date.split('-')
-    
-        # Get second date for year component
-        second_dt = datetime.strptime(dt_pts[1], "%B %d, %Y")
-    
-        # Combine year for first component
-        first_dt = str(dt_pts[0]) + ', ' + str(second_dt.year)
-    
-        # Convert to datetime
-        first_dt = datetime.strptime(first_dt, "%B %d, %Y")
-    
-        # Convert to proper string format
-        first_dt = first_dt.strftime("%Y-%m-%d")
-    
         # Return date
         return(first_dt)
+    except Exception as e:
+        return("ERROR")
 
 # Function for getting second date   
 def get_end_dt(meet_date) -> str:
@@ -60,28 +82,64 @@ def get_end_dt(meet_date) -> str:
     # Count the occurrences of each month name in the input string
     occurrences = sum(1 for month in month_names if month in meet_date)
 
-     # Strip any potential whitespace
+    # Strip any potential whitespace
     meet_date = meet_date.strip()
+
+    # Remove any duplicate whitespace
+    meet_date = re.sub(r'\s+', ' ', meet_date)
+
+    # Replace any hyphens followed by a space with just a hyphen
+    # Some rows have weird formatting with an extraneous space that isn't technically a double space
+    meet_date = re.sub('- ', '-', meet_date)
     
-    if occurrences < 2:
-        return("NULL")
-    
-    # Handle multi month dates
-    else:
-        dt_pts = meet_date.split('-')
-    
-        # Get second date for year component
-        second_dt = datetime.strptime(dt_pts[1], "%B %d, %Y")
-    
-        # Convert to proper string format
-        second_dt = second_dt.strftime("%Y-%m-%d")
-    
+    try:
+        # Handle multi month dates
+        if occurrences > 1:
+            # Split into separate months
+            dt_pts = meet_date.split('-')
+
+            # Convert to date and then string format
+            date_string = datetime.strptime(dt_pts[1], "%B %d, %Y")
+
+            # Format as string
+            second_dt = date_string.strftime("%Y-%m-%d")
+        
+        # Handle single month dates
+        else:
+            # Check if date is multiple days or single day
+            if '-' in meet_date: # Multiple days
+                # Split off year
+                meet_yr = meet_date[-4:]
+
+                # Split the date on the comma
+                days_pts = meet_date.split(',')
+
+                # Split into month and days
+                mnth_dy = days_pts[0].split(' ')
+                
+                # Get the second day
+                day_two = mnth_dy[1].split('-')[1]
+
+                # Put the components together in a single string
+                date_string = str(mnth_dy[0]) + ' ' + str(day_two) + ', ' + str(meet_yr)
+                date_string = datetime.strptime(date_string, "%B %d, %Y")
+
+                # Format as string
+                second_dt = date_string.strftime("%Y-%m-%d")
+
+            else: # Single day
+                # Single day meet means null second date
+                second_dt = 'NULL'
+                
         # Return date
         return(second_dt)
+
+    except Exception as e:
+        return("ERROR")
     
 # convert track to numeric length
 def convert_track_length(track_length) -> int:
-    if track_length != "NULL" and track_length is not None:
+    if track_length != "NULL" and track_length is not None and track_length != '':
         # drop the potential m
         track_length = track_length.replace('m', '')
 
@@ -92,45 +150,31 @@ def convert_track_length(track_length) -> int:
     # handle null values
     else:
         return(400)
-    
-def get_conv_800(alt):
-    conv_mark = 1.004556e+00 + alt * (-2.137286e-06)
-    return conv_mark
 
-def get_conv_mile(alt):
-    conv_mark = 1.012194e+00 + alt * (-6.834575e-06)
-    return conv_mark
-
-def get_conv_3k(alt):
-    conv_mark = 1.015564e+00 + alt * (-8.205417e-06)
-    return conv_mark
-
-def get_conv_5k(alt):
-    conv_mark = 1.016327e+00 + alt * (-8.773153e-06)
-    return conv_mark
-
+# Function for altitude conversions
 def get_conv(alt, event, mark) -> float:
     # Check if no elevation, return time as is
-    if alt == 0 or event not in ["800m", "Mile", "3000m", "5000m"]:
+    if alt == 0 or alt == '' or event not in ["800m", "Mile", "3000m", "5000m"]:
         return mark
     else:
         if event == "800m":
             # Get conversion factor
-            conv_fac = get_conv_800(alt)
+            conv_fac = 1.004556e+00 + float(alt) * (-2.137286e-06)
         elif event == "Mile":
             # Get conversion factor
-            conv_fac = get_conv_mile(alt)
+            conv_fac = 1.012194e+00 + float(alt) * (-6.834575e-06)
         elif event == "3000m":
             # Get conversion factor
-            conv_fac = get_conv_3k(alt)
+            conv_fac = 1.015564e+00 + float(alt) * (-8.205417e-06)
         else:  # 5000m
             # Get conversion factor
-            conv_fac = get_conv_5k(alt)
+            conv_fac = 1.016327e+00 + float(alt) * (-8.773153e-06)
         
         # Convert mark
-        conv_mrk = conv_fac * mark
+        conv_mrk = float(conv_fac) * float(mark)
+
         # Return converted mark
-        return conv_mrk
+        return round(conv_mrk, 2)
 
 # function to determine track type for conversion
 def get_track_conv_type(track_length, banked_or_flat) -> str:

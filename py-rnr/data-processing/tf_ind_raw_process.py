@@ -186,13 +186,21 @@ tf_ind = tf_ind.withColumn("meet_start_dt", get_start_dt_udf(f.col("meet_date"))
 	.withColumn("meet_end_dt", get_end_dt_udf(f.col("meet_date"))) \
 	.withColumn("track_length", convert_track_len_udf(f.col("track_length")))
 
+tm_qry = """
+SELECT
+	"TEAM" as team, 
+	"DIVISION"  as division
+FROM 
+	team_lookup_info
+"""
+
 # Query team info
 team_divs = spark.read \
 	.format("jdbc") \
 	.option("url", url) \
 	.option("user", pg_config['user']) \
 	.option("password", pg_config['pwd']) \
-	.option("query", 'SELECT * FROM team_lookup_info') \
+	.option("query", tm_qry) \
 	.option("driver", "org.postgresql.Driver") \
 	.load()
 
@@ -202,7 +210,7 @@ sz_qry = '''
 		case 
 			when gender like 'men' then 'M'
 			else 'F'
-		end as gender, 
+		end as rnr_gender, 
 		event as evnt, 
 		type, 
 		conversion 
@@ -236,7 +244,7 @@ tf_ind = tf_ind.withColumn("track_conv_type", get_track_type_conv_udf(f.col("tra
 # Join track size conversion
 tf_ind = tf_ind.join(
 	size_conv,
-	(f.lower(tf_ind['event']) == size_conv['evnt']) & (tf_ind['gender'] == size_conv['gender']) & (tf_ind['track_conv_type'] == size_conv['type']),
+	(f.lower(tf_ind['event']) == size_conv['evnt']) & (tf_ind['gender'] == size_conv['rnr_gender']) & (tf_ind['track_conv_type'] == size_conv['type']),
 	how='left'
 ).drop("evnt")
 
@@ -245,4 +253,17 @@ tf_ind = tf_ind.withColumn("conversion", f.coalesce(f.col('conversion'), f.lit(1
 
 # Generate altitude converted mark & fully converted mark
 tf_ind_conv = tf_ind.withColumn("alt_conv_mark", get_altitude_conv_udf(f.col("elevation"), f.col("event"), f.col("time_in_seconds"))) \
-					.withColumn("converted_mark", f.col("alt_conv_mark") * f.col("conversion"))
+					.withColumn("converted_mark", f.col("alt_conv_mark") * f.col("conversion")) \
+					.withColumn("converted_mark", f.round(f.col("converted_mark"), 2)) \
+					.drop('rnr_gender', 'type')
+
+# Set properties
+properties = {
+	"user": pg_config['user'],
+	"password": pg_config['pwd'],
+	"driver": "org.postgresql.Driver"
+}
+
+# Write DataFrame to RDS PostgreSQL table
+tf_ind_conv.write.jdbc(url=url, table="tf_ind_results", mode="append", properties=properties)
+

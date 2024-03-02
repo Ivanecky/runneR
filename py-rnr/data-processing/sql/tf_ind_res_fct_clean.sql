@@ -69,29 +69,20 @@ with tmp as (
 			or lower(race_name) like '%10,000%' then '10km'
 			else 'OTHER'
 		end as event,
+		-- get gender from event name
+		case 
+			when lower(race_name) like '%men%' and lower(race_name) not like '%women%' then 'M'
+			else 'F'
+		end as gender,
+		race_name, 
+		-- check if race is a prelim
+		case
+			when lower(race_name) like '%prelim%' then 1
+			else 0
+		end as is_prelim,
 		-- keep raw time for display purposes
 		REPLACE(time, 'h', '0') as time,
 		meet_date,
-		-- format meet date
-		split_part(
-			REGEXP_REPLACE(meet_date, '\s+', ' ', 'g'),
-			' ',
-			2
-		) as meet_mnth,
-		replace(
-			split_part(
-				REGEXP_REPLACE(meet_date, '\s+', ' ', 'g'),
-				' ',
-				3
-			),
-			',',
-			''
-		) as meet_day,
-		split_part(
-			REGEXP_REPLACE(meet_date, '\s+', ' ', 'g'),
-			' ',
-			4
-		) as meet_yr,
 		meet_location,
 		meet_name,
 		f.elevation,
@@ -99,7 +90,7 @@ with tmp as (
 		f.banked_or_flat
 	from tf_ind_res_fct t
 		left join facilities f on t.meet_location = f.meet_facility
-	limit 10000
+	limit 10000 
 )
 
 select name,
@@ -107,6 +98,9 @@ select name,
 	team,
 	class,
 	event,
+	race_name, 
+	is_prelim, 
+	gender, 
 	time,
 	case
 		-- Check if the string contains ':'
@@ -121,26 +115,7 @@ select name,
 		else -- If no ':', assume the value is already in seconds
 		time::FLOAT
 	end as time_in_seconds,
-	case
-		when position('-' in meet_day) > 0 then to_date(
-			meet_mnth || ' ' || split_part(meet_day, '-', 1) || ' ' || meet_yr,
-			'Month DD YYYY'
-		)
-		else to_date(
-			meet_mnth || ' ' || meet_day || ' ' || meet_yr,
-			'Month DD YYYY'
-		)
-	end as meet_start_dt,
-	case
-		when position('-' in meet_day) > 0 then to_date(
-			meet_mnth || ' ' || split_part(meet_day, '-', 2) || ' ' || meet_yr,
-			'Month DD YYYY'
-		)
-		else to_date(
-			meet_mnth || ' ' || meet_day || ' ' || meet_yr,
-			'Month DD YYYY'
-		)
-	end as meet_end_dt,
+	meet_date, 
 	meet_location,
 	meet_name,
 	elevation,
